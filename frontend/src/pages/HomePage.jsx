@@ -1,31 +1,20 @@
 // src/pages/HomePage.jsx
 import { useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import SearchBar from '../components/SearchBar';
 
 function HomePage() {
-  const [shipmentId, setShipmentId] = useState('');
   const navigate = useNavigate();
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    if (shipmentId.trim()) {
-      navigate(`/shipment/${shipmentId.trim()}`);
-    }
+  const handleSearch = (shipmentId) => {
+    navigate(`/shipment/${shipmentId}`);
   };
 
   return (
     <div className="home-page">
       <h1>Audit Trail</h1>
       <p>Search for a shipment to view its event history and current state.</p>
-      <form onSubmit={handleSearch} className="search-form">
-        <input
-          type="text"
-          placeholder="Enter shipment ID..."
-          value={shipmentId}
-          onChange={(e) => setShipmentId(e.target.value)}
-        />
-        <button type="submit">Search</button>
-      </form>
+      <SearchBar onSearch={handleSearch} />
+      <p className="hint-text">Try: SHIP001 or SHIP002 (mock data)</p>
     </div>
   );
 }
