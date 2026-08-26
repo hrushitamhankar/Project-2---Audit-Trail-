@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node src/server.js",
-    "lint": "eslint ."
+   "start": "node src/server.js",
+    "lint": "eslint .",
+    "worker": "node src/workers/projectionWorker.js"
   },
   "keywords": [],
   "author": "",
