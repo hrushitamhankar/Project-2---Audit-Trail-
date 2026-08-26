@@ -57,3 +57,51 @@
   font-size: 0.85rem;
   color: #666;
 }
+
+.shipment-card {
+  border: 1px solid #d9dee6;
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-top: 1.5rem;
+  max-width: 500px;
+}
+
+.shipment-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.shipment-card-header h3 {
+  margin: 0;
+}
+
+.status-badge {
+  background-color: #eaf1fe;
+  color: #2f6fed;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: bold;
+}
+
+.shipment-field {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.field-label {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.field-value {
+  font-weight: 500;
+}
+
+.error-text {
+  color: #d4460b;
+}
