@@ -1,11 +1,14 @@
 // src/pages/DashboardPage.jsx
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { getShipmentById } from '../services/shipmentService';
 import ShipmentCard from '../components/ShipmentCard';
+import LoadingSpinner from '../components/LoadingSpinner';
+import EmptyState from '../components/EmptyState';
 
 function DashboardPage() {
   const { shipmentId } = useParams();
+  const navigate = useNavigate();
   const [shipment, setShipment] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -36,9 +39,17 @@ function DashboardPage() {
     <div className="dashboard-page">
       <h2>Shipment Dashboard</h2>
 
-      {loading && <p>Loading shipment data...</p>}
-      {error && <p className="error-text">{error}</p>}
-      {shipment && <ShipmentCard shipment={shipment} />}
+      {loading && <LoadingSpinner label={`Fetching shipment ${shipmentId}...`} />}
+
+      {!loading && error && (
+        <EmptyState
+          message={`Couldn't find shipment "${shipmentId}". Check the ID and try again.`}
+          actionLabel="Back to Search"
+          onAction={() => navigate('/')}
+        />
+      )}
+
+      {!loading && !error && shipment && <ShipmentCard shipment={shipment} />}
 
       {/* Timeline, slider, chart will be added in Week 2/3/4 */}
     </div>
