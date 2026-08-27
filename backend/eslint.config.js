@@ -6,9 +6,11 @@ module.exports = [
 
     {
         files: ["**/*.js"],
+
         languageOptions: {
             ecmaVersion: "latest",
             sourceType: "commonjs",
+
             globals: {
                 ...globals.node
             }
@@ -17,6 +19,16 @@ module.exports = [
         rules: {
             "no-unused-vars": "warn",
             "no-console": "off"
+        }
+    },
+
+    {
+        files: ["tests/**/*.js"],
+
+        languageOptions: {
+            globals: {
+                ...globals.jest
+            }
         }
     }
 ];

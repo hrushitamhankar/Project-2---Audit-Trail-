@@ -71,7 +71,7 @@ async function startProjectionWorker() {
     try {
       await mongoose.connect(process.env.MONGO_URI);
       console.log("[P3 Worker] Connected to MongoDB for Read Model synchronization.");
-    } catch (err) {
+    } catch {
       console.warn("[P3 Worker] Running offline/standalone mode (no DB URI).");
     }
   }
