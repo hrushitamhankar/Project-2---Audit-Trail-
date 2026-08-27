@@ -105,3 +105,61 @@
 .error-text {
   color: #d4460b;
 }
+
+/* Loading spinner */
+.loading-spinner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  color: #4a5568;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid #eaf1fe;
+  border-top: 3px solid #2f6fed;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Empty state */
+.empty-state {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  background-color: #fdeee7;
+  border: 1px solid #d4460b;
+  border-radius: 8px;
+  color: #1a202c;
+}
+
+.empty-state-action {
+  margin-top: 0.75rem;
+  padding: 0.4rem 0.9rem;
+  background-color: #1b2a4a;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.empty-state-action:hover {
+  background-color: #2f6fed;
+}
+
+/* General page polish */
+.home-page h1,
+.dashboard-page h2 {
+  color: #1b2a4a;
+}
+
+.dashboard-page {
+  min-height: 200px;
+}
