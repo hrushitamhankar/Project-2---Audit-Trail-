@@ -1,8 +1,9 @@
 // src/pages/DashboardPage.jsx
 import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { getShipmentById } from '../services/shipmentService';
+import { getShipmentById, getShipmentEvents } from '../services/shipmentService';
 import ShipmentCard from '../components/ShipmentCard';
+import Timeline from '../components/Timeline';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 
@@ -10,6 +11,7 @@ function DashboardPage() {
   const { shipmentId } = useParams();
   const navigate = useNavigate();
   const [shipment, setShipment] = useState(null);
+  const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -18,10 +20,14 @@ function DashboardPage() {
     setLoading(true);
     setError(null);
     setShipment(null);
+    setEvents([]);
 
-    getShipmentById(shipmentId)
-      .then((data) => {
-        if (isMounted) setShipment(data);
+    Promise.all([getShipmentById(shipmentId), getShipmentEvents(shipmentId)])
+      .then(([shipmentData, eventsData]) => {
+        if (isMounted) {
+          setShipment(shipmentData);
+          setEvents(eventsData);
+        }
       })
       .catch((err) => {
         if (isMounted) setError(err.message);
@@ -49,9 +55,13 @@ function DashboardPage() {
         />
       )}
 
-      {!loading && !error && shipment && <ShipmentCard shipment={shipment} />}
-
-      {/* Timeline, slider, chart will be added in Week 2/3/4 */}
+      {!loading && !error && shipment && (
+        <>
+          <ShipmentCard shipment={shipment} />
+          <h3 className="section-heading">Event Timeline</h3>
+          <Timeline events={events} />
+        </>
+      )}
     </div>
   );
 }
