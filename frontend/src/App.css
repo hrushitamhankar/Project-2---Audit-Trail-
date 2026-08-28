@@ -163,3 +163,58 @@
 .dashboard-page {
   min-height: 200px;
 }
+
+.section-heading {
+  margin-top: 2rem;
+  color: #1b2a4a;
+}
+
+.timeline {
+  margin-top: 1rem;
+  border-left: 2px solid #d9dee6;
+  padding-left: 1.25rem;
+}
+
+.timeline-item {
+  position: relative;
+  margin-bottom: 1.25rem;
+}
+
+.timeline-marker {
+  position: absolute;
+  left: -1.5rem;
+  top: 0.3rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #7a3fe0;
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.timeline-event-type {
+  font-weight: bold;
+  color: #1b2a4a;
+}
+
+.timeline-timestamp {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.timeline-payload {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: #4a5568;
+}
+
+.timeline-empty {
+  color: #666;
+  margin-top: 1rem;
+}

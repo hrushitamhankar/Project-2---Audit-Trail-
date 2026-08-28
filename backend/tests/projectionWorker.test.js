@@ -55,4 +55,28 @@ describe("Projection Worker Event Handlers", () => {
       { new: true }
     );
   });
+
+  test("applies TEMPERATURE_SPIKE event and sets ALERT status when exceeding threshold", async () => {
+    ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
+
+    const sensorEvent = {
+      aggregateId: "SHP-202",
+      eventType: "TEMPERATURE_SPIKE",
+      payload: { temperature: 12.5 },
+      version: 3,
+      timestamp: new Date(),
+    };
+
+    await applyEventToReadModel(sensorEvent);
+
+    expect(ShipmentReadModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { shipmentId: "SHP-202" },
+      expect.objectContaining({
+        temperature: 12.5,
+        currentStatus: "ALERT",
+        version: 3,
+      }),
+      { new: true }
+    );
+  });
 });
