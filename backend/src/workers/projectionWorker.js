@@ -54,6 +54,22 @@ async function applyEventToReadModel(event) {
         console.log(`[P3 Worker] ReadModel marked as DELIVERED for shipment ${aggregateId}`);
         break;
 
+      case "TEMPERATURE_SPIKE":
+        // Handles IoT sensor events and marks alert state if critical threshold exceeded
+        const isCritical = payload.temperature > 8.0; // Standard cold-chain threshold
+        await ShipmentReadModel.findOneAndUpdate(
+          { shipmentId: aggregateId },
+          {
+            temperature: payload.temperature,
+            currentStatus: isCritical ? "ALERT" : "IN_TRANSIT",
+            version: version,
+            lastUpdated: timestamp || new Date(),
+          },
+          { new: true }
+        );
+        console.log(`[P3 Worker] Sensor update for ${aggregateId}: ${payload.temperature}°C (Alert: ${isCritical})`);
+        break;
+
       default:
         console.log(`[P3 Worker] Unhandled event type: ${eventType}`);
     }
@@ -71,7 +87,7 @@ async function startProjectionWorker() {
     try {
       await mongoose.connect(process.env.MONGO_URI);
       console.log("[P3 Worker] Connected to MongoDB for Read Model synchronization.");
-    } catch {
+    } catch (err) {
       console.warn("[P3 Worker] Running offline/standalone mode (no DB URI).");
     }
   }
