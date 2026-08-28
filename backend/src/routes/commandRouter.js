@@ -2,10 +2,10 @@ const express = require("express");
 
 const router = express.Router();
 
-router.get("/shipment/:id", (req, res) => {
+router.post("/shipment/move", (req, res) => {
     res.status(200).json({
-        message: "Shipment query received",
-        shipmentId: req.params.id
+        message: "Shipment move command received",
+        command: req.body
     });
 });
 
