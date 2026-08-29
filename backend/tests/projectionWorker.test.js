@@ -79,4 +79,20 @@ describe("Projection Worker Event Handlers", () => {
       { new: true }
     );
   });
+
+  test("replays a series of sequential events accurately", async () => {
+    ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
+
+    const history = [
+      { aggregateId: "SHP-303", eventType: "SHIPMENT_CREATED", payload: { origin: "Hub A" }, version: 1 },
+      { aggregateId: "SHP-303", eventType: "SHIPMENT_MOVED", payload: { currentLocation: "Hub B" }, version: 2 },
+      { aggregateId: "SHP-303", eventType: "SHIPMENT_DELIVERED", payload: { destination: "Hub C" }, version: 3 },
+    ];
+
+    for (const evt of history) {
+      await applyEventToReadModel(evt);
+    }
+
+    expect(ShipmentReadModel.findOneAndUpdate).toHaveBeenCalledTimes(3);
+  });
 });
