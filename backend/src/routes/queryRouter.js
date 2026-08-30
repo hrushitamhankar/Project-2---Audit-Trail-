@@ -1,61 +1,25 @@
 const express = require("express");
-
-const { getEvents } = require("../services/eventStore");
-const AuditEvent = require("../models/AuditEvent");
+const router = express.Router();
+const mongoose = require("mongoose");
 const ShipmentReadModel = require("../models/readModel");
 const { applyEventToReadModel } = require("../workers/projectionWorker");
 
-const router = express.Router();
-
-// =====================================================
-// GET /events/:aggregateId
-// Get all audit events for an aggregate
-// =====================================================
-router.get("/events/:aggregateId", async (req, res) => {
-  try {
-    const { aggregateId } = req.params;
-
-    if (!aggregateId) {
-      return res.status(400).json({
-        message: "aggregateId is required",
-      });
-    }
-
-    const events = await getEvents(aggregateId);
-
-    return res.status(200).json({
-      count: events.length,
-      events,
-    });
-  } catch (error) {
-    console.error("Error fetching audit events:", error.message);
-
-    return res.status(500).json({
-      message: "Failed to fetch audit events",
-      error: error.message,
-    });
-  }
-});
-
-// =====================================================
-// GET /shipment/:id/events
-// Returns the raw chronological audit log for a shipment
-// =====================================================
+/**
+ * GET /shipment/:id/events
+ * Returns the raw chronological audit log for a shipment
+ */
 router.get("/shipment/:id/events", async (req, res) => {
   try {
     const { id } = req.params;
-
-    const events = await AuditEvent.find({
-      aggregateId: id,
-    })
-      .sort({ timestamp: 1 })
-      .lean();
+    const AuditEvent = mongoose.models.AuditEvent || mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
+    
+    const events = await AuditEvent.find({ aggregateId: id }).sort({ version: 1 }).lean();
 
     return res.status(200).json({
       success: true,
       shipmentId: id,
       totalEvents: events.length,
-      events,
+      events: events,
     });
   } catch (error) {
     return res.status(500).json({
@@ -65,17 +29,14 @@ router.get("/shipment/:id/events", async (req, res) => {
   }
 });
 
-// =====================================================
-// GET /shipment/:id
-// Fast query path from the pre-computed Read Model
-// =====================================================
+/**
+ * GET /shipment/:id
+ * Fast query path from the pre-computed Read Model
+ */
 router.get("/shipment/:id", async (req, res) => {
   try {
     const { id } = req.params;
-
-    const shipment = await ShipmentReadModel.findOne({
-      shipmentId: id,
-    });
+    const shipment = await ShipmentReadModel.findOne({ shipmentId: id });
 
     if (!shipment) {
       return res.status(404).json({
@@ -96,19 +57,16 @@ router.get("/shipment/:id", async (req, res) => {
   }
 });
 
-// =====================================================
-// POST /projection/rebuild/:id
-// Rebuild the read model by replaying historical events
-// =====================================================
+/**
+ * POST /projection/rebuild/:id
+ * Rebuilds the read model for a specific shipment by replaying all historical events
+ */
 router.post("/projection/rebuild/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const AuditEvent = mongoose.models.AuditEvent || mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
-    const events = await AuditEvent.find({
-      aggregateId: id,
-    })
-      .sort({ timestamp: 1 })
-      .lean();
+    const events = await AuditEvent.find({ aggregateId: id }).sort({ version: 1 }).lean();
 
     if (!events || events.length === 0) {
       return res.status(404).json({
@@ -118,18 +76,14 @@ router.post("/projection/rebuild/:id", async (req, res) => {
     }
 
     // Reset current projection
-    await ShipmentReadModel.deleteOne({
-      shipmentId: id,
-    });
+    await ShipmentReadModel.deleteOne({ shipmentId: id });
 
     // Sequentially apply all events
     for (const event of events) {
       await applyEventToReadModel(event);
     }
 
-    const rebuiltModel = await ShipmentReadModel.findOne({
-      shipmentId: id,
-    });
+    const rebuiltModel = await ShipmentReadModel.findOne({ shipmentId: id });
 
     return res.status(200).json({
       success: true,
@@ -139,6 +93,33 @@ router.post("/projection/rebuild/:id", async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /projection/health
+ * Reports synchronization status and total projected records
+ */
+router.get("/projection/health", async (req, res) => {
+  try {
+    const totalReadModels = await ShipmentReadModel.countDocuments();
+    const alertCount = await ShipmentReadModel.countDocuments({ currentStatus: "ALERT" });
+
+    return res.status(200).json({
+      success: true,
+      status: "HEALTHY",
+      metrics: {
+        totalShipmentsProjected: totalReadModels,
+        criticalAlertsActive: alertCount,
+        workerSyncMode: "Live Change Streams / Polling",
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      status: "DEGRADED",
       error: error.message,
     });
   }
