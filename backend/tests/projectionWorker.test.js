@@ -9,6 +9,7 @@ describe("Projection Worker Event Handlers", () => {
   });
 
   test("applies SHIPMENT_CREATED event to ReadModel", async () => {
+    ShipmentReadModel.findOne.mockResolvedValue(null);
     ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
 
     const event = {
@@ -33,6 +34,7 @@ describe("Projection Worker Event Handlers", () => {
   });
 
   test("applies SHIPMENT_MOVED event to ReadModel", async () => {
+    ShipmentReadModel.findOne.mockResolvedValue({ shipmentId: "SHP-202", version: 1 });
     ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
 
     const event = {
@@ -57,6 +59,7 @@ describe("Projection Worker Event Handlers", () => {
   });
 
   test("applies TEMPERATURE_SPIKE event and sets ALERT status when exceeding threshold", async () => {
+    ShipmentReadModel.findOne.mockResolvedValue({ shipmentId: "SHP-202", version: 2 });
     ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
 
     const sensorEvent = {
@@ -81,6 +84,7 @@ describe("Projection Worker Event Handlers", () => {
   });
 
   test("replays a series of sequential events accurately", async () => {
+    ShipmentReadModel.findOne.mockResolvedValue(null);
     ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
 
     const history = [
@@ -94,5 +98,24 @@ describe("Projection Worker Event Handlers", () => {
     }
 
     expect(ShipmentReadModel.findOneAndUpdate).toHaveBeenCalledTimes(3);
+  });
+
+  test("skips updating read model when incoming event has a stale version", async () => {
+    ShipmentReadModel.findOne.mockResolvedValue({
+      shipmentId: "SHP-202",
+      version: 4,
+    });
+
+    const staleEvent = {
+      aggregateId: "SHP-202",
+      eventType: "SHIPMENT_MOVED",
+      payload: { currentLocation: "Old Hub" },
+      version: 2,
+      timestamp: new Date(),
+    };
+
+    await applyEventToReadModel(staleEvent);
+
+    expect(ShipmentReadModel.findOneAndUpdate).not.toHaveBeenCalled();
   });
 });
