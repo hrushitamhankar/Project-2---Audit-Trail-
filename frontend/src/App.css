@@ -172,36 +172,79 @@
 .timeline {
   margin-top: 1rem;
   border-left: 2px solid #d9dee6;
-  padding-left: 1.25rem;
+  padding-left: 1.5rem;
 }
 
 .timeline-item {
   position: relative;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
 }
 
 .timeline-marker {
   position: absolute;
-  left: -1.5rem;
-  top: 0.3rem;
-  width: 10px;
-  height: 10px;
+  left: -1.75rem;
+  top: 0.35rem;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background-color: #7a3fe0;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px currentColor;
 }
 
 .timeline-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.timeline-event-type {
+.event-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
   font-weight: bold;
-  color: #1b2a4a;
+  text-transform: capitalize;
 }
+
+.event-icon {
+  font-size: 0.9rem;
+}
+
+/* Color variants per event type */
+.badge-created {
+  background-color: #eaf1fe;
+  color: #2f6fed;
+}
+
+.badge-transit {
+  background-color: #e7f9f1;
+  color: #0e9f6e;
+}
+
+.badge-alert {
+  background-color: #fdeee7;
+  color: #d4460b;
+}
+
+.badge-arrived {
+  background-color: #f1ebfc;
+  color: #7a3fe0;
+}
+
+.badge-default {
+  background-color: #f5f7fa;
+  color: #4a5568;
+}
+
+.timeline-marker.badge-created { color: #2f6fed; }
+.timeline-marker.badge-transit { color: #0e9f6e; }
+.timeline-marker.badge-alert { color: #d4460b; }
+.timeline-marker.badge-arrived { color: #7a3fe0; }
+.timeline-marker.badge-default { color: #4a5568; }
 
 .timeline-timestamp {
   font-size: 0.8rem;
@@ -209,7 +252,7 @@
 }
 
 .timeline-payload {
-  margin: 0.25rem 0 0;
+  margin: 0.4rem 0 0;
   font-size: 0.85rem;
   color: #4a5568;
 }
