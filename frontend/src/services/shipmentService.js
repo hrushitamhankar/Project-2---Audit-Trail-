@@ -1,10 +1,15 @@
 // src/services/shipmentService.js
+import apiClient from './apiClient';
 
 /**
- * Mock data - simulates what the backend Event Store / Read Model
- * will eventually return. Swap the function bodies below with real
- * axios calls once P1/P3 ship the actual endpoints.
+ * Toggle this to switch between mock data and real backend calls.
+ * Flip individual endpoints to true as P1/P3 ship them.
  */
+const USE_REAL_API = {
+  getShipmentById: false,
+  getShipmentEvents: false,
+  getShipmentStateAt: false,
+};
 
 const MOCK_SHIPMENTS = {
   SHIP001: {
@@ -36,46 +41,40 @@ const MOCK_EVENTS = {
   ],
 };
 
-// Simulates network delay so loading states are testable now.
 function simulateDelay(ms = 500) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * TODO: Replace with real call once P1 ships GET /shipment/:id
- * e.g. return axios.get(`${BASE_URL}/shipment/${id}`).then(res => res.data);
- */
 export async function getShipmentById(id) {
+  if (USE_REAL_API.getShipmentById) {
+    const res = await apiClient.get(`/shipment/${id}`);
+    return res.data;
+  }
   await simulateDelay();
   const shipment = MOCK_SHIPMENTS[id];
-  if (!shipment) {
-    throw new Error(`Shipment "${id}" not found`);
-  }
+  if (!shipment) throw new Error(`Shipment "${id}" not found`);
   return shipment;
 }
 
-/**
- * TODO: Replace with real call once P3 ships GET /shipment/:id/events
- */
 export async function getShipmentEvents(id) {
+  if (USE_REAL_API.getShipmentEvents) {
+    const res = await apiClient.get(`/shipment/${id}/events`);
+    return res.data;
+  }
   await simulateDelay();
   const events = MOCK_EVENTS[id];
-  if (!events) {
-    throw new Error(`No events found for shipment "${id}"`);
-  }
+  if (!events) throw new Error(`No events found for shipment "${id}"`);
   return events;
 }
 
-/**
- * TODO: Replace with real call once P1 ships GET /shipment/:id/state?at=timestamp
- */
 export async function getShipmentStateAt(id, timestamp) {
+  if (USE_REAL_API.getShipmentStateAt) {
+    const res = await apiClient.get(`/shipment/${id}/state`, { params: { at: timestamp } });
+    return res.data;
+  }
   await simulateDelay();
   const events = MOCK_EVENTS[id];
-  if (!events) {
-    throw new Error(`No events found for shipment "${id}"`);
-  }
-  // naive mock "replay": just return events up to that timestamp
+  if (!events) throw new Error(`No events found for shipment "${id}"`);
   const relevantEvents = events.filter((e) => new Date(e.timestamp) <= new Date(timestamp));
   return {
     aggregateId: id,
