@@ -10,11 +10,11 @@ async function applyEventToReadModel(event) {
   const { aggregateId, eventType, payload, version, timestamp } = event;
 
   try {
-    // Prevent applying stale or out-of-order events
+    // Version Guard: Prevent applying stale or out-of-order events
     const existing = await ShipmentReadModel.findOne({ shipmentId: aggregateId });
     if (existing && existing.version >= version && eventType !== "SHIPMENT_CREATED") {
       console.warn(`[P3 Worker] Skipping duplicate/stale version ${version} for ${aggregateId} (current: ${existing.version})`);
-      return;
+      return false;
     }
 
     switch (eventType) {
@@ -79,9 +79,26 @@ async function applyEventToReadModel(event) {
       default:
         console.log(`[P3 Worker] Unhandled event type: ${eventType}`);
     }
+    return true;
   } catch (error) {
     console.error(`[P3 Worker] Error projecting event for ${aggregateId}:`, error.message);
+    return false;
   }
+}
+
+/**
+ * Bulk applies an array of events chronologically
+ */
+async function applyBatchEvents(events) {
+  const sortedEvents = [...events].sort((a, b) => a.version - b.version);
+  let processedCount = 0;
+
+  for (const evt of sortedEvents) {
+    const success = await applyEventToReadModel(evt);
+    if (success) processedCount++;
+  }
+
+  return processedCount;
 }
 
 function listenToEventStream(db) {
@@ -127,4 +144,4 @@ if (require.main === module) {
   startProjectionWorker();
 }
 
-module.exports = { applyEventToReadModel, startProjectionWorker };
+module.exports = { applyEventToReadModel, applyBatchEvents, startProjectionWorker };
