@@ -4,7 +4,6 @@ const queryRouter = require("../src/routes/queryRouter");
 const ShipmentReadModel = require("../src/models/readModel");
 const { applyEventToReadModel } = require("../src/workers/projectionWorker");
 
-// Initialize test express instance
 const app = express();
 app.use(express.json());
 app.use("/", queryRouter);
@@ -43,15 +42,12 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
       },
     ];
 
-    // 1. Process each event through the projection worker
     for (const evt of lifecycleEvents) {
       await applyEventToReadModel(evt);
     }
 
-    // Verify all 3 events triggered read model updates
     expect(ShipmentReadModel.findOneAndUpdate).toHaveBeenCalledTimes(3);
 
-    // 2. Mock the final read state for the query route
     ShipmentReadModel.findOne.mockResolvedValue({
       shipmentId: shipmentId,
       currentStatus: "DELIVERED",
@@ -59,7 +55,6 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
       version: 3,
     });
 
-    // 3. Query the fast-read endpoint
     const response = await request(app).get(`/shipment/${shipmentId}`);
 
     expect(response.status).toBe(200);
@@ -77,5 +72,22 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
     expect(response.status).toBe(404);
     expect(response.body.success).toBe(false);
     expect(response.body.message).toContain("not found in Read Model");
+  });
+
+  test("GET /shipment/analytics/summary returns aggregated counts per status", async () => {
+    ShipmentReadModel.aggregate.mockResolvedValue([
+      { _id: "IN_TRANSIT", count: 4 },
+      { _id: "ALERT", count: 1 },
+      { _id: "DELIVERED", count: 2 },
+    ]);
+
+    const response = await request(app).get("/shipment/analytics/summary");
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.total).toBe(7);
+    expect(response.body.data.IN_TRANSIT).toBe(4);
+    expect(response.body.data.ALERT).toBe(1);
+    expect(response.body.data.DELIVERED).toBe(2);
   });
 });

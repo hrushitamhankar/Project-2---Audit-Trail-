@@ -5,6 +5,48 @@ const ShipmentReadModel = require("../models/readModel");
 const { applyEventToReadModel } = require("../workers/projectionWorker");
 
 /**
+ * GET /shipment/analytics/summary
+ * Aggregates read-model metrics across all tracked shipments
+ */
+router.get("/shipment/analytics/summary", async (req, res) => {
+  try {
+    const summary = await ShipmentReadModel.aggregate([
+      {
+        $group: {
+          _id: "$currentStatus",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const formattedSummary = {
+      total: 0,
+      CREATED: 0,
+      IN_TRANSIT: 0,
+      DELIVERED: 0,
+      ALERT: 0,
+    };
+
+    summary.forEach((item) => {
+      if (item._id && formattedSummary[item._id] !== undefined) {
+        formattedSummary[item._id] = item.count;
+      }
+      formattedSummary.total += item.count;
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: formattedSummary,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
  * GET /shipment/:id/events
  * Returns the raw chronological audit log for a shipment
  */
