@@ -26,7 +26,7 @@ function DashboardPage() {
       .then(([shipmentData, eventsData]) => {
         if (isMounted) {
           setShipment(shipmentData);
-          setEvents(eventsData);
+          setEvents(eventsData || []);
         }
       })
       .catch((err) => {
@@ -59,7 +59,7 @@ function DashboardPage() {
         <>
           <ShipmentCard shipment={shipment} />
           <h3 className="section-heading">Event Timeline</h3>
-          <Timeline events={events} />
+          <Timeline events={events} isLoading={loading} />
         </>
       )}
     </div>

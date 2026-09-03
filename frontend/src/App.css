@@ -261,3 +261,54 @@
   color: #666;
   margin-top: 1rem;
 }
+
+.timeline-container {
+  margin-top: 1rem;
+}
+
+.timeline-count {
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.timeline-loading {
+  color: #4a5568;
+  font-style: italic;
+  margin-top: 1rem;
+}
+
+.timeline-empty {
+  margin-top: 1rem;
+  padding: 1.5rem;
+  background-color: #f5f7fa;
+  border: 1px dashed #d9dee6;
+  border-radius: 8px;
+  text-align: center;
+  color: #666;
+}
+
+/* Scroll behavior for long lists */
+.timeline {
+  max-height: 600px;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.timeline::-webkit-scrollbar {
+  width: 6px;
+}
+
+.timeline::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 3px;
+}
+
+.timeline::-webkit-scrollbar-thumb {
+  background: #d9dee6;
+  border-radius: 3px;
+}
+
+.timeline::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
