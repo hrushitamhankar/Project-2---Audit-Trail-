@@ -90,4 +90,29 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
     expect(response.body.data.ALERT).toBe(1);
     expect(response.body.data.DELIVERED).toBe(2);
   });
+
+  test("GET /shipments returns paginated and filtered read models", async () => {
+    const mockShipments = [
+      { shipmentId: "SHP-101", currentStatus: "ALERT", location: "Hub X", version: 2 },
+      { shipmentId: "SHP-102", currentStatus: "ALERT", location: "Hub Y", version: 1 },
+    ];
+
+    // Mock chaining: find().sort().skip().limit().lean()
+    const mockLean = jest.fn().mockResolvedValue(mockShipments);
+    const mockLimit = jest.fn().mockReturnValue({ lean: mockLean });
+    const mockSkip = jest.fn().mockReturnValue({ limit: mockLimit });
+    const mockSort = jest.fn().mockReturnValue({ skip: mockSkip });
+
+    ShipmentReadModel.find.mockReturnValue({ sort: mockSort });
+    ShipmentReadModel.countDocuments.mockResolvedValue(2);
+
+    const response = await request(app).get("/shipments?status=ALERT&page=1&limit=10");
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data).toHaveLength(2);
+    expect(response.body.pagination.page).toBe(1);
+    expect(response.body.pagination.totalRecords).toBe(2);
+    expect(response.body.pagination.totalPages).toBe(1);
+  });
 });
