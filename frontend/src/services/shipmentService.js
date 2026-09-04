@@ -48,7 +48,7 @@ function simulateDelay(ms = 500) {
 export async function getShipmentById(id) {
   if (USE_REAL_API.getShipmentById) {
     const res = await apiClient.get(`/shipment/${id}`);
-    return res.data;
+    return res.data.data ?? res.data;
   }
   await simulateDelay();
   const shipment = MOCK_SHIPMENTS[id];
@@ -59,7 +59,7 @@ export async function getShipmentById(id) {
 export async function getShipmentEvents(id) {
   if (USE_REAL_API.getShipmentEvents) {
     const res = await apiClient.get(`/shipment/${id}/events`);
-    return res.data;
+    return res.data.events ?? res.data;
   }
   await simulateDelay();
   const events = MOCK_EVENTS[id];
@@ -70,7 +70,7 @@ export async function getShipmentEvents(id) {
 export async function getShipmentStateAt(id, timestamp) {
   if (USE_REAL_API.getShipmentStateAt) {
     const res = await apiClient.get(`/shipment/${id}/state`, { params: { at: timestamp } });
-    return res.data;
+    return res.data.data ?? res.data;
   }
   await simulateDelay();
   const events = MOCK_EVENTS[id];

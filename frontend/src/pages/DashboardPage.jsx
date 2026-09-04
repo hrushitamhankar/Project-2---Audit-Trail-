@@ -1,17 +1,19 @@
 // src/pages/DashboardPage.jsx
 import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getShipmentById, getShipmentEvents } from '../services/shipmentService';
 import ShipmentCard from '../components/ShipmentCard';
 import Timeline from '../components/Timeline';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import StateScrubber from '../components/StateScrubber';
 
 function DashboardPage() {
   const { shipmentId } = useParams();
   const navigate = useNavigate();
   const [shipment, setShipment] = useState(null);
   const [events, setEvents] = useState([]);
+  const [selectedState, setSelectedState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -41,6 +43,10 @@ function DashboardPage() {
     };
   }, [shipmentId]);
 
+  const handleStateChange = useCallback((state) => {
+    setSelectedState(state);
+  }, []);
+
   return (
     <div className="dashboard-page">
       <h2>Shipment Dashboard</h2>
@@ -57,7 +63,12 @@ function DashboardPage() {
 
       {!loading && !error && shipment && (
         <>
-          <ShipmentCard shipment={shipment} />
+          <ShipmentCard shipment={selectedState || shipment} />
+          <StateScrubber
+            events={events}
+            shipment={shipment}
+            onStateChange={handleStateChange}
+          />
           <h3 className="section-heading">Event Timeline</h3>
           <Timeline events={events} isLoading={loading} />
         </>

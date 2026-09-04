@@ -312,3 +312,67 @@
 .timeline::-webkit-scrollbar-thumb:hover {
   background: #aaa;
 }
+
+.state-scrubber {
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid #d9dee6;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.state-scrubber-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.state-scrubber h3 {
+  margin: 0.15rem 0 0;
+  color: #1b2a4a;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #2f6fed;
+  font-size: 0.72rem;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.state-scrubber-position {
+  padding: 0.25rem 0.55rem;
+  border-radius: 4px;
+  background: #eaf1fe;
+  color: #2f6fed;
+  font-size: 0.8rem;
+  font-weight: bold;
+}
+
+.state-scrubber-input {
+  display: block;
+  width: 100%;
+  margin: 1.4rem 0 0.5rem;
+  accent-color: #2f6fed;
+  cursor: pointer;
+}
+
+.state-scrubber-labels {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.75rem;
+  align-items: center;
+  color: #666;
+  font-size: 0.76rem;
+}
+
+.state-scrubber-labels strong {
+  color: #1b2a4a;
+  text-align: center;
+}
+
+.state-scrubber-labels span:last-child {
+  text-align: right;
+}
