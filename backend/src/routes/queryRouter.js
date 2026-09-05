@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const ShipmentReadModel = require("../models/readModel");
+const cacheService = require("../services/cacheService");
 const { applyEventToReadModel } = require("../workers/projectionWorker");
 
 /**
@@ -89,7 +90,7 @@ router.get("/shipment/analytics/summary", async (req, res) => {
 
 /**
  * GET /shipment/:id/events
- * Returns the raw chronological audit log for a shipment
+ * Returns raw chronological audit log for a shipment
  */
 router.get("/shipment/:id/events", async (req, res) => {
   try {
@@ -114,11 +115,22 @@ router.get("/shipment/:id/events", async (req, res) => {
 
 /**
  * GET /shipment/:id
- * Fast query path from the pre-computed Read Model
+ * Fast query path with in-memory cache check
  */
 router.get("/shipment/:id", async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Check in-memory cache first
+    const cachedData = cacheService.get(id);
+    if (cachedData) {
+      return res.status(200).json({
+        success: true,
+        source: "CACHE",
+        data: cachedData,
+      });
+    }
+
     const shipment = await ShipmentReadModel.findOne({ shipmentId: id });
 
     if (!shipment) {
@@ -128,8 +140,11 @@ router.get("/shipment/:id", async (req, res) => {
       });
     }
 
+    cacheService.set(id, shipment);
+
     return res.status(200).json({
       success: true,
+      source: "DATABASE",
       data: shipment,
     });
   } catch (error) {
@@ -142,7 +157,7 @@ router.get("/shipment/:id", async (req, res) => {
 
 /**
  * POST /projection/rebuild/:id
- * Rebuilds the read model for a specific shipment by replaying all historical events
+ * Replays history and invalidates existing cache
  */
 router.post("/projection/rebuild/:id", async (req, res) => {
   try {
@@ -158,6 +173,7 @@ router.post("/projection/rebuild/:id", async (req, res) => {
       });
     }
 
+    cacheService.invalidate(id);
     await ShipmentReadModel.deleteOne({ shipmentId: id });
 
     for (const event of events) {
@@ -181,7 +197,6 @@ router.post("/projection/rebuild/:id", async (req, res) => {
 
 /**
  * GET /projection/health
- * Reports synchronization status and total projected records
  */
 router.get("/projection/health", async (req, res) => {
   try {
@@ -194,6 +209,7 @@ router.get("/projection/health", async (req, res) => {
       metrics: {
         totalShipmentsProjected: totalReadModels,
         criticalAlertsActive: alertCount,
+        cachedEntriesCount: cacheService.size(),
         workerSyncMode: "Live Change Streams / Polling",
       },
     });

@@ -1,41 +1,28 @@
 require("dotenv").config();
-
 const mongoose = require("mongoose");
 const ShipmentReadModel = require("../models/readModel");
+const cacheService = require("../services/cacheService");
 
 /**
  * Event Projection Engine (P3 Ownership)
- * Applies domain events to maintain the materialized Read Model.
+ * Applies domain events to maintain the materialized Read Model and invalidate cached views.
  */
 async function applyEventToReadModel(event) {
-  const {
-    aggregateId,
-    eventType,
-    payload,
-    version,
-    timestamp,
-  } = event;
+  const { aggregateId, eventType, payload, version, timestamp } = event;
 
   try {
-    // Prevent applying stale or out-of-order events
-    const existing = await ShipmentReadModel.findOne({
-      shipmentId: aggregateId,
-    });
-
-    if (
-      existing &&
-      existing.version >= version &&
-      eventType !== "SHIPMENT_CREATED"
-    ) {
-      console.warn(
-        `[P3 Worker] Skipping duplicate/stale version ${version} for ${aggregateId} (current: ${existing.version})`
-      );
+    // Version Guard: Prevent applying stale or out-of-order events
+    const existing = await ShipmentReadModel.findOne({ shipmentId: aggregateId });
+    if (existing && existing.version >= version && eventType !== "SHIPMENT_CREATED") {
+      console.warn(`[P3 Worker] Skipping duplicate/stale version ${version} for ${aggregateId} (current: ${existing.version})`);
       return false;
     }
 
+    let updatedDoc = null;
+
     switch (eventType) {
       case "SHIPMENT_CREATED":
-        await ShipmentReadModel.findOneAndUpdate(
+        updatedDoc = await ShipmentReadModel.findOneAndUpdate(
           { shipmentId: aggregateId },
           {
             shipmentId: aggregateId,
@@ -44,63 +31,42 @@ async function applyEventToReadModel(event) {
             version: version || 1,
             lastUpdated: timestamp || new Date(),
           },
-          {
-            upsert: true,
-            new: true,
-          }
+          { upsert: true, new: true }
         );
-
-        console.log(
-          `[P3 Worker] ReadModel initialized for shipment ${aggregateId}`
-        );
+        console.log(`[P3 Worker] ReadModel initialized for shipment ${aggregateId}`);
         break;
 
       case "SHIPMENT_MOVED":
-        await ShipmentReadModel.findOneAndUpdate(
+        updatedDoc = await ShipmentReadModel.findOneAndUpdate(
           { shipmentId: aggregateId },
           {
-            location:
-              payload?.currentLocation ||
-              payload?.destination ||
-              "In Transit",
+            location: payload?.currentLocation || payload?.destination || "In Transit",
             currentStatus: "IN_TRANSIT",
             version: version,
             lastUpdated: timestamp || new Date(),
           },
-          {
-            new: true,
-          }
+          { new: true }
         );
-
-        console.log(
-          `[P3 Worker] ReadModel updated for moved shipment ${aggregateId} to version ${version}`
-        );
+        console.log(`[P3 Worker] ReadModel updated for moved shipment ${aggregateId} to version ${version}`);
         break;
 
       case "SHIPMENT_DELIVERED":
-        await ShipmentReadModel.findOneAndUpdate(
+        updatedDoc = await ShipmentReadModel.findOneAndUpdate(
           { shipmentId: aggregateId },
           {
             currentStatus: "DELIVERED",
-            location:
-              payload?.destination || "Destination Facility",
+            location: payload?.destination || "Destination Facility",
             version: version,
             lastUpdated: timestamp || new Date(),
           },
-          {
-            new: true,
-          }
+          { new: true }
         );
-
-        console.log(
-          `[P3 Worker] ReadModel marked as DELIVERED for shipment ${aggregateId}`
-        );
+        console.log(`[P3 Worker] ReadModel marked as DELIVERED for shipment ${aggregateId}`);
         break;
 
-      case "TEMPERATURE_SPIKE": {
+      case "TEMPERATURE_SPIKE":
         const isCritical = payload?.temperature > 8.0;
-
-        await ShipmentReadModel.findOneAndUpdate(
+        updatedDoc = await ShipmentReadModel.findOneAndUpdate(
           { shipmentId: aggregateId },
           {
             temperature: payload?.temperature,
@@ -108,128 +74,82 @@ async function applyEventToReadModel(event) {
             version: version,
             lastUpdated: timestamp || new Date(),
           },
-          {
-            new: true,
-          }
+          { new: true }
         );
-
-        console.log(
-          `[P3 Worker] Sensor update for ${aggregateId}: ${payload?.temperature}°C (Alert: ${isCritical})`
-        );
-
+        console.log(`[P3 Worker] Sensor update for ${aggregateId}: ${payload?.temperature}°C (Alert: ${isCritical})`);
         break;
-      }
 
       default:
-        console.log(
-          `[P3 Worker] Unhandled event type: ${eventType}`
-        );
+        console.log(`[P3 Worker] Unhandled event type: ${eventType}`);
+    }
+
+    // Invalidate stale cache and warm with newly projected record
+    if (updatedDoc) {
+      cacheService.set(aggregateId, updatedDoc);
+    } else {
+      cacheService.invalidate(aggregateId);
     }
 
     return true;
   } catch (error) {
-    console.error(
-      `[P3 Worker] Error projecting event for ${aggregateId}:`,
-      error.message
-    );
-
+    console.error(`[P3 Worker] Error projecting event for ${aggregateId}:`, error.message);
     return false;
   }
 }
 
-/**
- * Bulk applies an array of events chronologically.
- */
 async function applyBatchEvents(events) {
-  const sortedEvents = [...events].sort(
-    (a, b) => a.version - b.version
-  );
-
+  const sortedEvents = [...events].sort((a, b) => a.version - b.version);
   let processedCount = 0;
 
-  for (const event of sortedEvents) {
-    const success = await applyEventToReadModel(event);
-
-    if (success) {
-      processedCount++;
-    }
+  for (const evt of sortedEvents) {
+    const success = await applyEventToReadModel(evt);
+    if (success) processedCount++;
   }
 
   return processedCount;
 }
 
-/**
- * Attaches real-time Change Stream listener to MongoDB EventStore.
- */
 function listenToEventStream(db) {
   const collection = db.collection("auditevents");
-
+  
   try {
     const changeStream = collection.watch();
-
-    console.log(
-      "[P3 Worker] Active Change Stream watching 'auditevents' collection..."
-    );
+    console.log("[P3 Worker] Active Change Stream watching 'auditevents' collection...");
 
     changeStream.on("change", async (change) => {
       if (change.operationType === "insert") {
         const newEvent = change.fullDocument;
-
-        console.log(
-          `[P3 Worker] New event detected: ${newEvent.eventType} for aggregate ${newEvent.aggregateId}`
-        );
-
+        console.log(`[P3 Worker] New event detected: ${newEvent.eventType} for aggregate ${newEvent.aggregateId}`);
         await applyEventToReadModel(newEvent);
       }
     });
 
     changeStream.on("error", (err) => {
-      console.error(
-        "[P3 Worker] Change Stream error:",
-        err.message
-      );
+      console.error("[P3 Worker] Change Stream error:", err.message);
     });
-  } catch {
-    console.warn(
-      "[P3 Worker] Change Streams require replica set. Falling back to direct worker processing."
-    );
+  } catch (streamErr) {
+    console.warn("[P3 Worker] Change Streams require replica set. Falling back to direct worker processing.");
   }
 }
 
-/**
- * Starts the projection worker.
- */
 async function startProjectionWorker() {
   console.log("------------------------------------------");
-  console.log(
-    "[P3 Worker] Background projection service initialized."
-  );
+  console.log("[P3 Worker] Background projection service initialized.");
   console.log("------------------------------------------");
 
   if (process.env.MONGO_URI) {
     try {
       await mongoose.connect(process.env.MONGO_URI);
-
-      console.log(
-        "[P3 Worker] Connected to MongoDB for ReadModel synchronization."
-      );
-
+      console.log("[P3 Worker] Connected to MongoDB for Read Model synchronization.");
       listenToEventStream(mongoose.connection);
-    } catch {
-      console.warn(
-        "[P3 Worker] Running standalone mode (no DB URI)."
-      );
+    } catch (err) {
+      console.warn("[P3 Worker] Running standalone mode (no DB URI).");
     }
   }
 }
 
-// Start worker only when run directly.
 if (require.main === module) {
   startProjectionWorker();
 }
 
-module.exports = {
-  applyEventToReadModel,
-  applyBatchEvents,
-  startProjectionWorker,
-};
+module.exports = { applyEventToReadModel, applyBatchEvents, startProjectionWorker };
