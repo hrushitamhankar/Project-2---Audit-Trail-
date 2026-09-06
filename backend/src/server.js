@@ -1,79 +1,50 @@
 require("dotenv").config();
-
 const express = require("express");
+const cors = require("cors");
 const mongoose = require("mongoose");
-
-const {
-    appendEvent,
-    getEvents
-} = require("./services/eventStore");
-
 const commandRouter = require("./routes/commandRouter");
 const queryRouter = require("./routes/queryRouter");
 
 const app = express();
+const PORT = process.env.PORT || 4000;
+
+// Enable CORS for frontend Vite dev server
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 app.use(express.json());
 
-// CQRS routes
-app.use(commandRouter);
-app.use(queryRouter);
+// Register CQRS Command and Query routers
+app.use("/", commandRouter);
+app.use("/", queryRouter);
 
-const PORT = process.env.PORT || 5000;
-
-// Home route
-app.get("/", (req, res) => {
-    res.json({
-        message: "Audit Trail Backend is running"
-    });
-});
-
-// Health check
+// Base sanity check
 app.get("/health", (req, res) => {
-    res.json({
-        status: "OK",
-        database:
-            mongoose.connection.readyState === 1
-                ? "connected"
-                : "disconnected"
-    });
+  res.status(200).json({ status: "OK", service: "Audit Trail Backend API" });
 });
 
-// Existing event routes
-app.post("/events", async (req, res) => {
+async function startServer() {
+  if (process.env.MONGO_URI) {
     try {
-        const event = await appendEvent(req.body);
-
-        res.status(201).json(event);
-    } catch (error) {
-        res.status(400).json({
-            error: error.message
-        });
+      await mongoose.connect(process.env.MONGO_URI);
+      console.log("[Server] Connected to MongoDB.");
+    } catch (err) {
+      console.error("[Server] MongoDB connection error:", err.message);
     }
-});
+  }
 
-app.get("/events/:aggregateId", async (req, res) => {
-    try {
-        const events = await getEvents(req.params.aggregateId);
+  app.listen(PORT, () => {
+    console.log(`[Server] Audit Trail API listening on http://localhost:${PORT}`);
+  });
+}
 
-        res.status(200).json(events);
-    } catch (error) {
-        res.status(500).json({
-            error: error.message
-        });
-    }
-});
+if (require.main === module) {
+  startServer();
+}
 
-// MongoDB connection
-mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => {
-        console.log("MongoDB connected");
-
-        app.listen(PORT, () => {
-            console.log(`Server running on http://localhost:${PORT}`);
-        });
-    })
-    .catch((error) => {
-        console.error("MongoDB connection failed:", error.message);
-    });
+module.exports = app;
