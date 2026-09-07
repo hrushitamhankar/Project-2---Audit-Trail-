@@ -1,4 +1,4 @@
-const { applyEventToReadModel } = require("../src/workers/projectionWorker");
+const { applyEventToReadModel, validateEventEnvelope } = require("../src/workers/projectionWorker");
 const ShipmentReadModel = require("../src/models/readModel");
 
 jest.mock("../src/models/readModel");
@@ -116,6 +116,18 @@ describe("Projection Worker Event Handlers", () => {
 
     await applyEventToReadModel(staleEvent);
 
+    expect(ShipmentReadModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  test("quarantines and rejects malformed events missing required envelope fields", async () => {
+    const invalidEventMissingId = { eventType: "SHIPMENT_MOVED", version: 2 };
+    const invalidEventMissingVersion = { aggregateId: "SHP-404", eventType: "SHIPMENT_MOVED" };
+
+    expect(validateEventEnvelope(invalidEventMissingId)).toBe(false);
+    expect(validateEventEnvelope(invalidEventMissingVersion)).toBe(false);
+
+    const result = await applyEventToReadModel(invalidEventMissingId);
+    expect(result).toBe(false);
     expect(ShipmentReadModel.findOneAndUpdate).not.toHaveBeenCalled();
   });
 });
