@@ -5,7 +5,6 @@ const ShipmentReadModel = require("../src/models/readModel");
 const { applyEventToReadModel } = require("../src/workers/projectionWorker");
 
 const app = express();
-
 app.use(express.json());
 app.use("/", queryRouter);
 
@@ -23,27 +22,21 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
       {
         aggregateId: shipmentId,
         eventType: "SHIPMENT_CREATED",
-        payload: {
-          origin: "Seattle Hub",
-        },
+        payload: { origin: "Seattle Hub" },
         version: 1,
         timestamp: new Date().toISOString(),
       },
       {
         aggregateId: shipmentId,
         eventType: "SHIPMENT_MOVED",
-        payload: {
-          currentLocation: "Denver Distribution Hub",
-        },
+        payload: { currentLocation: "Denver Distribution Hub" },
         version: 2,
         timestamp: new Date().toISOString(),
       },
       {
         aggregateId: shipmentId,
         eventType: "SHIPMENT_DELIVERED",
-        payload: {
-          destination: "Austin Facility",
-        },
+        payload: { destination: "Austin Facility" },
         version: 3,
         timestamp: new Date().toISOString(),
       },
@@ -83,27 +76,15 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
 
   test("GET /shipment/analytics/summary returns aggregated counts per status", async () => {
     ShipmentReadModel.aggregate.mockResolvedValue([
-      {
-        _id: "IN_TRANSIT",
-        count: 4,
-      },
-      {
-        _id: "ALERT",
-        count: 1,
-      },
-      {
-        _id: "DELIVERED",
-        count: 2,
-      },
+      { _id: "IN_TRANSIT", count: 4 },
+      { _id: "ALERT", count: 1 },
+      { _id: "DELIVERED", count: 2 },
     ]);
 
-    const response = await request(app).get(
-      "/shipment/analytics/summary"
-    );
+    const response = await request(app).get("/shipment/analytics/summary");
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-
     expect(response.body.data.total).toBe(7);
     expect(response.body.data.IN_TRANSIT).toBe(4);
     expect(response.body.data.ALERT).toBe(1);
@@ -112,53 +93,47 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
 
   test("GET /shipments returns paginated and filtered read models", async () => {
     const mockShipments = [
-      {
-        shipmentId: "SHP-101",
-        currentStatus: "ALERT",
-        location: "Hub X",
-        version: 2,
-      },
-      {
-        shipmentId: "SHP-102",
-        currentStatus: "ALERT",
-        location: "Hub Y",
-        version: 1,
-      },
+      { shipmentId: "SHP-101", currentStatus: "ALERT", location: "Hub X", version: 2 },
+      { shipmentId: "SHP-102", currentStatus: "ALERT", location: "Hub Y", version: 1 },
     ];
 
-    // Mock chaining:
-    // find().sort().skip().limit().lean()
     const mockLean = jest.fn().mockResolvedValue(mockShipments);
+    const mockLimit = jest.fn().mockReturnValue({ lean: mockLean });
+    const mockSkip = jest.fn().mockReturnValue({ limit: mockLimit });
+    const mockSort = jest.fn().mockReturnValue({ skip: mockSkip });
 
-    const mockLimit = jest.fn().mockReturnValue({
-      lean: mockLean,
-    });
-
-    const mockSkip = jest.fn().mockReturnValue({
-      limit: mockLimit,
-    });
-
-    const mockSort = jest.fn().mockReturnValue({
-      skip: mockSkip,
-    });
-
-    ShipmentReadModel.find.mockReturnValue({
-      sort: mockSort,
-    });
-
+    ShipmentReadModel.find.mockReturnValue({ sort: mockSort });
     ShipmentReadModel.countDocuments.mockResolvedValue(2);
 
-    const response = await request(app).get(
-      "/shipments?status=ALERT&page=1&limit=10"
-    );
+    const response = await request(app).get("/shipments?status=ALERT&page=1&limit=10");
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-
     expect(response.body.data).toHaveLength(2);
-
     expect(response.body.pagination.page).toBe(1);
     expect(response.body.pagination.totalRecords).toBe(2);
     expect(response.body.pagination.totalPages).toBe(1);
+  });
+
+  test("GET /shipment/:id/verify returns deterministic SHA-256 state fingerprint", async () => {
+    const mockShipment = {
+      shipmentId: "SHP-AUDIT-101",
+      currentStatus: "DELIVERED",
+      location: "Terminal A",
+      version: 4,
+    };
+
+    ShipmentReadModel.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(mockShipment),
+    });
+
+    const response = await request(app).get("/shipment/SHP-AUDIT-101/verify");
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.verifiedVersion).toBe(4);
+    expect(response.body.algorithm).toBe("SHA-256");
+    expect(response.body.stateFingerprint).toBeDefined();
+    expect(response.body.stateFingerprint).toHaveLength(64);
   });
 });

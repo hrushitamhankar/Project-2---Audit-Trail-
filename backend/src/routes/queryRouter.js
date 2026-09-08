@@ -1,214 +1,317 @@
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
-
+const crypto = require("crypto");
 const ShipmentReadModel = require("../models/readModel");
 const cacheService = require("../services/cacheService");
 const { applyEventToReadModel } = require("../workers/projectionWorker");
 
-// ============================================================
-// GET /shipments
-// Get shipments with pagination, status filter and search
-// ============================================================
-router.get("/shipments", async (req, res) => {
+function computeStateFingerprint(shipmentId, status, location, version) {
+  const payload = `${shipmentId}|${status}|${location}|${version}`;
+  return crypto.createHash("sha256").update(payload).digest("hex");
+}
+
+/**
+ * GET /shipment/:id/state
+ * Point-in-time state reconstruction using chronological events up to query param 'at'
+ */
+router.get("/shipment/:id/state", async (req, res) => {
   try {
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const { id } = req.params;
+    const { at } = req.query;
 
-    const limit = Math.min(
-      Math.max(parseInt(req.query.limit, 10) || 10, 1),
-      100
-    );
-
-    const skip = (page - 1) * limit;
-
-    const filter = {};
-
-    if (req.query.status) {
-      filter.currentStatus = req.query.status;
+    if (!at) {
+      return res.status(400).json({
+        success: false,
+        message: "Query parameter 'at' is required.",
+      });
     }
 
-    if (req.query.search) {
-      const search = req.query.search;
-
-      filter.$or = [
-        {
-          shipmentId: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-        {
-          location: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-      ];
+    const targetDate = new Date(at);
+    if (isNaN(targetDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid timestamp provided.",
+      });
     }
 
-    const [shipments, total] = await Promise.all([
-      ShipmentReadModel.find(filter)
-        .sort({ lastUpdated: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+    const AuditEvent =
+      mongoose.models.AuditEvent ||
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
-      ShipmentReadModel.countDocuments(filter),
-    ]);
+    let query = AuditEvent.find({
+      aggregateId: id,
+      timestamp: { $lte: targetDate },
+    }).sort({ version: 1 });
+
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+    const events = await query;
+
+    if (!events || events.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No historical events found for shipment ${id} at or before ${targetDate.toISOString()}`,
+      });
+    }
+
+    // Replay state up to target timestamp
+    const state = {
+      shipmentId: id,
+      currentStatus: "CREATED",
+      location: "Origin Facility",
+      temperature: null,
+      version: 0,
+      lastUpdated: null,
+    };
+
+    for (const event of events) {
+      state.version = event.version || state.version + 1;
+      state.lastUpdated = event.timestamp;
+
+      switch (event.eventType) {
+        case "SHIPMENT_CREATED":
+          state.currentStatus = "CREATED";
+          state.location = event.payload?.origin || state.location;
+          break;
+        case "SHIPMENT_MOVED":
+          state.currentStatus = "IN_TRANSIT";
+          state.location =
+            event.payload?.currentLocation ||
+            event.payload?.destination ||
+            state.location;
+          break;
+        case "SHIPMENT_DELIVERED":
+          state.currentStatus = "DELIVERED";
+          state.location = event.payload?.destination || state.location;
+          break;
+        case "TEMPERATURE_SPIKE":
+          state.temperature = event.payload?.temperature;
+          if (event.payload?.temperature > 8.0) {
+            state.currentStatus = "ALERT";
+          }
+          break;
+        default:
+          break;
+      }
+    }
 
     return res.status(200).json({
       success: true,
-      data: shipments,
-      pagination: {
-        page,
-        limit,
-        totalRecords: total,
-        totalPages: Math.ceil(total / limit),
+      data: {
+        shipmentId: id,
+        requestedAt: targetDate.toISOString(),
+        eventsApplied: events.length,
+        state,
       },
     });
   } catch (error) {
-    console.error("Error fetching shipments:", error);
-
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch shipments.",
       error: error.message,
     });
   }
 });
 
-// ============================================================
-// GET /shipment/analytics/summary
-// Shipment analytics summary
-// ============================================================
+/**
+ * GET /shipments
+ * List read-model shipments with pagination, status filter, and aggregate search
+ */
+router.get("/shipments", async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 10));
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    if (req.query.status) {
+      filter.currentStatus = req.query.status;
+    }
+    if (req.query.search) {
+      filter.shipmentId = { $regex: req.query.search, $options: "i" };
+    }
+
+    let query = ShipmentReadModel.find(filter)
+      .sort({ lastUpdated: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+
+    const [items, total] = await Promise.all([
+      query,
+      ShipmentReadModel.countDocuments(filter),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: items,
+      pagination: {
+        page,
+        limit,
+        totalRecords: total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /shipment/analytics/summary
+ * Aggregates read-model metrics across all tracked shipments
+ */
 router.get("/shipment/analytics/summary", async (req, res) => {
   try {
     const summary = await ShipmentReadModel.aggregate([
       {
         $group: {
           _id: "$currentStatus",
-          count: {
-            $sum: 1,
-          },
+          count: { $sum: 1 },
         },
       },
     ]);
 
-    // Object expected by projection/e2e tests
-    const data = {
+    const formattedSummary = {
       total: 0,
       CREATED: 0,
       IN_TRANSIT: 0,
-      ALERT: 0,
       DELIVERED: 0,
+      ALERT: 0,
     };
 
-    for (const item of summary) {
-      const count = item.count || 0;
-
-      if (item._id && Object.prototype.hasOwnProperty.call(data, item._id)) {
-        data[item._id] = count;
-      }
-
-      data.total += count;
+    if (Array.isArray(summary)) {
+      summary.forEach((item) => {
+        if (item._id && formattedSummary[item._id] !== undefined) {
+          formattedSummary[item._id] = item.count;
+        }
+        formattedSummary.total += item.count;
+      });
     }
 
     return res.status(200).json({
       success: true,
-      data,
+      data: formattedSummary,
     });
   } catch (error) {
-    console.error("Error fetching shipment analytics:", error);
-
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch shipment analytics.",
       error: error.message,
     });
   }
 });
 
-// ============================================================
-// GET /shipment/:id/events
-// Get all events for a shipment
-// ============================================================
-router.get("/shipment/:id/events", async (req, res) => {
+/**
+ * GET /shipment/:id/verify
+ * Computes deterministic cryptographic state fingerprint
+ */
+router.get("/shipment/:id/verify", async (req, res) => {
   try {
     const { id } = req.params;
+    let query = ShipmentReadModel.findOne({ shipmentId: id });
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+    const shipment = await query;
 
-    const AuditEvent =
-      mongoose.models.AuditEvent ||
-      mongoose.model(
-        "AuditEvent",
-        new mongoose.Schema({}, { strict: false })
-      );
+    if (!shipment) {
+      return res.status(404).json({
+        success: false,
+        message: `Shipment ${id} not found for audit verification.`,
+      });
+    }
 
-    const events = await AuditEvent.find({
-      aggregateId: id,
-    })
-      .sort({ version: 1 })
-      .lean();
+    const fingerprint = computeStateFingerprint(
+      shipment.shipmentId,
+      shipment.currentStatus,
+      shipment.location,
+      shipment.version
+    );
 
     return res.status(200).json({
       success: true,
-      data: events,
+      shipmentId: id,
+      verifiedVersion: shipment.version,
+      stateFingerprint: fingerprint,
+      algorithm: "SHA-256",
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("Error fetching shipment events:", error);
-
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch shipment events.",
       error: error.message,
     });
   }
 });
 
-// ============================================================
-// GET /shipment/:id
-// Get current shipment state
-// ============================================================
+/**
+ * GET /shipment/:id/events
+ * Returns raw chronological audit log for a shipment
+ */
+router.get("/shipment/:id/events", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const AuditEvent =
+      mongoose.models.AuditEvent ||
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
+
+    let query = AuditEvent.find({ aggregateId: id }).sort({ version: 1 });
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+    const events = await query;
+
+    return res.status(200).json({
+      success: true,
+      shipmentId: id,
+      totalEvents: events ? events.length : 0,
+      events: events || [],
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * GET /shipment/:id
+ * Fast query path with in-memory cache check
+ */
 router.get("/shipment/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    // ----------------------------------------------------------
-    // Check cache first
-    // ----------------------------------------------------------
-    const cachedShipment = cacheService.get(id);
-
-    if (cachedShipment) {
+    const cachedData = cacheService.get(id);
+    if (cachedData) {
       return res.status(200).json({
         success: true,
         source: "CACHE",
-        data: cachedShipment,
+        data: cachedData,
       });
     }
 
-    // ----------------------------------------------------------
-    // Get shipment from Read Model
-    //
-    // IMPORTANT:
-    // Do NOT use .lean() here because the Jest tests mock
-    // findOne() directly.
-    // ----------------------------------------------------------
-    const shipment = await ShipmentReadModel.findOne({
-      shipmentId: id,
-    });
+    let query = ShipmentReadModel.findOne({ shipmentId: id });
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+    const shipment = await query;
 
-    // ----------------------------------------------------------
-    // Shipment not found
-    // ----------------------------------------------------------
     if (!shipment) {
       return res.status(404).json({
         success: false,
-        message: `Shipment ${id} not found in Read Model.`,
+        message: `Shipment with ID ${id} not found in Read Model.`,
       });
     }
 
-    // ----------------------------------------------------------
-    // Save to cache
-    // ----------------------------------------------------------
     cacheService.set(id, shipment);
 
     return res.status(200).json({
@@ -217,339 +320,90 @@ router.get("/shipment/:id", async (req, res) => {
       data: shipment,
     });
   } catch (error) {
-    console.error("Error fetching shipment:", error);
-
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch shipment.",
       error: error.message,
     });
   }
 });
 
-// ============================================================
-// GET /shipment/:id/state?at=timestamp
-//
-// Historical shipment state using EVENT REPLAY
-//
-// This route rebuilds the state only in memory.
-// It DOES NOT modify the current Read Model.
-// ============================================================
-router.get("/shipment/:id/state", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { at } = req.query;
-
-    // ----------------------------------------------------------
-    // Validate timestamp
-    // ----------------------------------------------------------
-    if (!at) {
-      return res.status(400).json({
-        success: false,
-        message: "Query parameter 'at' is required.",
-      });
-    }
-
-    const targetTime = new Date(at);
-
-    if (Number.isNaN(targetTime.getTime())) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid timestamp provided.",
-      });
-    }
-
-    // ----------------------------------------------------------
-    // Get AuditEvent model
-    // ----------------------------------------------------------
-    const AuditEvent =
-      mongoose.models.AuditEvent ||
-      mongoose.model(
-        "AuditEvent",
-        new mongoose.Schema({}, { strict: false })
-      );
-
-    // ----------------------------------------------------------
-    // Get events up to requested timestamp
-    // ----------------------------------------------------------
-    const events = await AuditEvent.find({
-      aggregateId: id,
-      timestamp: {
-        $lte: targetTime,
-      },
-    })
-      .sort({ version: 1 })
-      .lean();
-
-    // ----------------------------------------------------------
-    // No historical events
-    // ----------------------------------------------------------
-    if (!events || events.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `No historical events found for shipment ${id} at ${at}.`,
-      });
-    }
-
-    // ----------------------------------------------------------
-    // Initial historical state
-    // ----------------------------------------------------------
-    const historicalState = {
-      shipmentId: id,
-      currentStatus: null,
-      location: null,
-      temperature: null,
-      version: 0,
-      lastUpdated: null,
-    };
-
-    // ----------------------------------------------------------
-    // Replay events in memory
-    // ----------------------------------------------------------
-    for (const event of events) {
-      const eventPayload = event.payload || {};
-
-      switch (event.eventType) {
-        // ------------------------------------------------------
-        // SHIPMENT_CREATED
-        // ------------------------------------------------------
-        case "SHIPMENT_CREATED":
-          historicalState.currentStatus = "CREATED";
-
-          historicalState.location =
-            eventPayload.origin ||
-            eventPayload.location ||
-            "Origin Facility";
-
-          historicalState.version =
-            event.version || historicalState.version || 1;
-
-          historicalState.lastUpdated =
-            event.timestamp || historicalState.lastUpdated;
-
-          break;
-
-        // ------------------------------------------------------
-        // SHIPMENT_MOVED
-        // ------------------------------------------------------
-        case "SHIPMENT_MOVED":
-          historicalState.currentStatus = "IN_TRANSIT";
-
-          historicalState.location =
-            eventPayload.location ||
-            eventPayload.currentLocation ||
-            eventPayload.destination ||
-            eventPayload.to ||
-            "In Transit";
-
-          historicalState.version =
-            event.version || historicalState.version;
-
-          historicalState.lastUpdated =
-            event.timestamp || historicalState.lastUpdated;
-
-          break;
-
-        // ------------------------------------------------------
-        // TEMPERATURE_SPIKE
-        // ------------------------------------------------------
-        case "TEMPERATURE_SPIKE": {
-          const isCritical = eventPayload.temperature > 8.0;
-
-          historicalState.temperature =
-            eventPayload.temperature ??
-            historicalState.temperature;
-
-          historicalState.currentStatus = isCritical
-            ? "ALERT"
-            : "IN_TRANSIT";
-
-          historicalState.version =
-            event.version || historicalState.version;
-
-          historicalState.lastUpdated =
-            event.timestamp || historicalState.lastUpdated;
-
-          break;
-        }
-
-        // ------------------------------------------------------
-        // SHIPMENT_DELIVERED
-        // ------------------------------------------------------
-        case "SHIPMENT_DELIVERED":
-          historicalState.currentStatus = "DELIVERED";
-
-          historicalState.location =
-            eventPayload.destination ||
-            eventPayload.location ||
-            "Destination Facility";
-
-          historicalState.version =
-            event.version || historicalState.version;
-
-          historicalState.lastUpdated =
-            event.timestamp || historicalState.lastUpdated;
-
-          break;
-
-        // ------------------------------------------------------
-        // Unknown event
-        // ------------------------------------------------------
-        default:
-          console.log(
-            `Unknown historical event type: ${event.eventType}`
-          );
-          break;
-      }
-    }
-
-    // ----------------------------------------------------------
-    // Return historical state
-    // ----------------------------------------------------------
-    return res.status(200).json({
-      success: true,
-      data: {
-        shipmentId: id,
-        requestedTime: targetTime,
-        source: "EVENT_REPLAY",
-        state: historicalState,
-        eventsApplied: events.length,
-      },
-    });
-  } catch (error) {
-    console.error(
-      "Error calculating historical state:",
-      error
-    );
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to calculate historical shipment state.",
-      error: error.message,
-    });
-  }
-});
-
-// ============================================================
-// POST /projection/rebuild/:id
-//
-// Rebuild current Read Model by replaying all events
-// ============================================================
+/**
+ * POST /projection/rebuild/:id
+ * Replays history and invalidates existing cache
+ */
 router.post("/projection/rebuild/:id", async (req, res) => {
   try {
     const { id } = req.params;
-
-    // ----------------------------------------------------------
-    // Get AuditEvent model
-    // ----------------------------------------------------------
     const AuditEvent =
       mongoose.models.AuditEvent ||
-      mongoose.model(
-        "AuditEvent",
-        new mongoose.Schema({}, { strict: false })
-      );
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
-    // ----------------------------------------------------------
-    // Get all events
-    // ----------------------------------------------------------
-    const events = await AuditEvent.find({
-      aggregateId: id,
-    })
-      .sort({ version: 1 })
-      .lean();
+    let query = AuditEvent.find({ aggregateId: id }).sort({ version: 1 });
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+    const events = await query;
 
-    // ----------------------------------------------------------
-    // No events
-    // ----------------------------------------------------------
     if (!events || events.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `No events found for shipment ${id}.`,
+        message: `No events found to replay for aggregate ID: ${id}`,
       });
     }
 
-    // ----------------------------------------------------------
-    // Clear cache
-    // ----------------------------------------------------------
     cacheService.invalidate(id);
+    await ShipmentReadModel.deleteOne({ shipmentId: id });
 
-    // ----------------------------------------------------------
-    // Delete current read model
-    // ----------------------------------------------------------
-    await ShipmentReadModel.deleteOne({
-      shipmentId: id,
-    });
-
-    // ----------------------------------------------------------
-    // Replay every event
-    // ----------------------------------------------------------
     for (const event of events) {
       await applyEventToReadModel(event);
     }
 
-    // ----------------------------------------------------------
-    // Get rebuilt state
-    //
-    // IMPORTANT:
-    // Do NOT use .lean() because the Jest test mocks
-    // findOne() directly.
-    // ----------------------------------------------------------
-    const rebuiltModel = await ShipmentReadModel.findOne({
-      shipmentId: id,
-    });
+    let rebuiltQuery = ShipmentReadModel.findOne({ shipmentId: id });
+    if (rebuiltQuery && typeof rebuiltQuery.lean === "function") {
+      rebuiltQuery = rebuiltQuery.lean();
+    }
+    const rebuiltModel = await rebuiltQuery;
 
-    // ----------------------------------------------------------
-    // Return rebuilt state
-    // ----------------------------------------------------------
     return res.status(200).json({
       success: true,
       message: `Successfully replayed ${events.length} events for ${id}`,
       rebuiltState: rebuiltModel,
     });
   } catch (error) {
-    console.error("Error rebuilding projection:", error);
-
     return res.status(500).json({
       success: false,
-      message: "Failed to rebuild projection.",
       error: error.message,
     });
   }
 });
 
-// ============================================================
-// GET /projection/health
-// Projection health check
-// ============================================================
+/**
+ * GET /projection/health
+ */
 router.get("/projection/health", async (req, res) => {
   try {
-    const shipmentCount =
-      await ShipmentReadModel.countDocuments();
+    const totalReadModels = await ShipmentReadModel.countDocuments();
+    const alertCount = await ShipmentReadModel.countDocuments({
+      currentStatus: "ALERT",
+    });
 
     return res.status(200).json({
       success: true,
       status: "HEALTHY",
-      projection: {
-        readModel: "ShipmentReadModel",
-        shipmentCount,
+      metrics: {
+        totalShipmentsProjected: totalReadModels,
+        criticalAlertsActive: alertCount,
+        cachedEntriesCount: cacheService.size(),
+        workerSyncMode: "Live Change Streams / Polling",
       },
     });
   } catch (error) {
-    console.error(
-      "Projection health check failed:",
-      error
-    );
-
     return res.status(500).json({
       success: false,
-      status: "UNHEALTHY",
-      message: "Projection health check failed.",
+      status: "DEGRADED",
       error: error.message,
     });
   }
 });
 
-// ============================================================
-// Export router
-// ============================================================
 module.exports = router;
