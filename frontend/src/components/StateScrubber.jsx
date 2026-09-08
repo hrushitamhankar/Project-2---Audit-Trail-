@@ -1,77 +1,59 @@
-import { useEffect, useState } from 'react';
+// src/components/StateScrubber.jsx
+import { useState } from 'react';
 
-function formatTimestamp(timestamp) {
-  return new Date(timestamp).toLocaleString();
+function formatDateTime(date) {
+  if (!date) return '—';
+  return date.toLocaleString();
 }
 
-function getStateAt(events, index, currentShipment) {
-  const appliedEvents = events.slice(0, index + 1);
-  const latestEvent = appliedEvents[appliedEvents.length - 1];
-  const temperatureEvent = [...appliedEvents]
-    .reverse()
-    .find((event) => typeof event.payload?.temperature === 'number');
-  const locationEvent = [...appliedEvents]
-    .reverse()
-    .find((event) => event.payload?.location || event.payload?.port);
-
-  const statusByEvent = {
-    CONTAINER_CREATED: 'CREATED',
-    LOADED_ON_SHIP: 'IN_TRANSIT',
-    TEMPERATURE_SPIKE: 'ALERT',
-    ARRIVED_AT_PORT: 'DELIVERED',
-  };
-
-  return {
-    ...currentShipment,
-    status: statusByEvent[latestEvent?.eventType] || currentShipment.status,
-    location: locationEvent?.payload?.location || locationEvent?.payload?.port || '—',
-    temperature: temperatureEvent?.payload?.temperature ?? '—',
-    lastUpdated: latestEvent?.timestamp,
-  };
-}
-
-function StateScrubber({ events, shipment, onStateChange }) {
-  const [selectedIndex, setSelectedIndex] = useState(events.length - 1);
-  const selectedEvent = events[selectedIndex];
-
-  useEffect(() => {
-    onStateChange(getStateAt(events, selectedIndex, shipment));
-  }, [events, selectedIndex, shipment, onStateChange]);
-
-  if (!events.length) return null;
-
-  function handleChange(event) {
-    const nextIndex = Number(event.target.value);
-    setSelectedIndex(nextIndex);
-    onStateChange(getStateAt(events, nextIndex, shipment));
+function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false }) {
+  if (!shipmentEvents || shipmentEvents.length === 0) {
+    return null;
   }
 
+  const timestamps = shipmentEvents.map((e) => new Date(e.timestamp).getTime());
+  const minTime = Math.min(...timestamps);
+  const maxTime = Math.max(...timestamps);
+
+  const [selectedTime, setSelectedTime] = useState(maxTime);
+  const selectedDate = new Date(selectedTime);
+
+  const handleSliderChange = (e) => {
+    const newTime = parseInt(e.target.value, 10);
+    setSelectedTime(newTime);
+    const isLive = newTime === maxTime;
+    onTimestampChange(new Date(newTime).toISOString(), isLive);
+  };
+
+  const isViewingLive = selectedTime === maxTime;
+
   return (
-    <section className="state-scrubber" aria-labelledby="state-scrubber-heading">
-      <div className="state-scrubber-heading">
-        <div>
-          <p className="eyebrow">Historical view</p>
-          <h3 id="state-scrubber-heading">State Scrubber</h3>
-        </div>
-        <span className="state-scrubber-position">
-          {selectedIndex + 1} / {events.length}
-        </span>
+    <div className="state-scrubber">
+      <h4>Historical State Viewer</h4>
+
+      <div className="scrubber-status">
+        {isViewingLive ? (
+          <span className="status-live"> Live (Current State)</span>
+        ) : (
+          <span className="status-historical">📅 Viewing: {formatDateTime(selectedDate)}</span>
+        )}
       </div>
+
       <input
-        aria-label="Select a shipment state in the event history"
-        className="state-scrubber-input"
         type="range"
-        min="0"
-        max={events.length - 1}
-        value={selectedIndex}
-        onChange={handleChange}
+        min={minTime}
+        max={maxTime}
+        value={selectedTime}
+        onChange={handleSliderChange}
+        disabled={isLoading}
+        className="scrubber-slider"
       />
-      <div className="state-scrubber-labels">
-        <span>{formatTimestamp(events[0].timestamp)}</span>
-        <strong>{selectedEvent.eventType.replace(/_/g, ' ')}</strong>
-        <span>{formatTimestamp(events[events.length - 1].timestamp)}</span>
+
+      <div className="scrubber-labels">
+        <span className="label-start">{formatDateTime(new Date(minTime))}</span>
+        <span className="label-end">{formatDateTime(new Date(maxTime))}</span>
       </div>
-    </section>
+    </div>
   );
 }
 

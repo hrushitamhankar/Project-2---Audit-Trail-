@@ -376,3 +376,34 @@
 .state-scrubber-labels span:last-child {
   text-align: right;
 }
+
+.historical-card {
+  margin-top: 1rem;
+  padding: 1.25rem;
+  background-color: white;
+  border: 2px solid #7a3fe0;
+  border-radius: 8px;
+}
+
+.historical-card h4 {
+  margin-top: 0;
+  color: #7a3fe0;
+}
+
+.historical-field {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.historical-loading {
+  color: #7a3fe0;
+  font-style: italic;
+  border-style: dashed;
+}
+
+.historical-error {
+  border-color: #d4460b;
+  color: #d4460b;
+}
