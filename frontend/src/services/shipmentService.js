@@ -8,7 +8,7 @@ import apiClient from './apiClient';
 const USE_REAL_API = {
   getShipmentById: true,
   getShipmentEvents: true,
-  getShipmentStateAt: false,
+  getShipmentStateAt: true,
 };
 
 const MOCK_SHIPMENTS = {
