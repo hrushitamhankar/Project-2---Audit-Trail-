@@ -57,6 +57,7 @@ function DashboardPage() {
       // Back to live state, no need to fetch historical
       setHistoricalState(null);
       setScrubberError(null);
+      setScrubberLoading(false);
       return;
     }
 

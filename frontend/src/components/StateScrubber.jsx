@@ -28,14 +28,23 @@ function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false })
   const isViewingLive = selectedTime === maxTime;
 
   return (
-    <div className="state-scrubber">
-      <h4>Historical State Viewer</h4>
+    <div className={`state-scrubber ${isViewingLive ? 'mode-live' : 'mode-historical'}`}>
+      <div className="scrubber-title-row">
+        <h4>Historical State Viewer</h4>
+        {isLoading && <span className="scrubber-inline-loader">syncing...</span>}
+      </div>
 
       <div className="scrubber-status">
         {isViewingLive ? (
-          <span className="status-live"> Live (Current State)</span>
+          <span className="status-live">
+            <span className="status-dot dot-live"></span>
+            Live (Current State)
+          </span>
         ) : (
-          <span className="status-historical">📅 Viewing: {formatDateTime(selectedDate)}</span>
+          <span className="status-historical">
+            <span className="status-dot dot-historical"></span>
+            Viewing: {formatDateTime(selectedDate)}
+          </span>
         )}
       </div>
 
@@ -53,6 +62,19 @@ function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false })
         <span className="label-start">{formatDateTime(new Date(minTime))}</span>
         <span className="label-end">{formatDateTime(new Date(maxTime))}</span>
       </div>
+
+      {!isViewingLive && (
+        <button
+          className="scrubber-return-live"
+          onClick={() => {
+            setSelectedTime(maxTime);
+            onTimestampChange(new Date(maxTime).toISOString(), true);
+          }}
+          disabled={isLoading}
+        >
+          ← Return to Live
+        </button>
+      )}
     </div>
   );
 }
