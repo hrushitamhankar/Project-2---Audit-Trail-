@@ -1,5 +1,6 @@
 const request = require("supertest");
 const express = require("express");
+const mongoose = require("mongoose");
 const queryRouter = require("../src/routes/queryRouter");
 const ShipmentReadModel = require("../src/models/readModel");
 const { applyEventToReadModel } = require("../src/workers/projectionWorker");
@@ -48,11 +49,13 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
 
     expect(ShipmentReadModel.findOneAndUpdate).toHaveBeenCalledTimes(3);
 
-    ShipmentReadModel.findOne.mockResolvedValue({
-      shipmentId: shipmentId,
-      currentStatus: "DELIVERED",
-      location: "Austin Facility",
-      version: 3,
+    ShipmentReadModel.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        shipmentId: shipmentId,
+        currentStatus: "DELIVERED",
+        location: "Austin Facility",
+        version: 3,
+      }),
     });
 
     const response = await request(app).get(`/shipment/${shipmentId}`);
@@ -65,7 +68,9 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
   });
 
   test("handles query for non-existent shipment gracefully", async () => {
-    ShipmentReadModel.findOne.mockResolvedValue(null);
+    ShipmentReadModel.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(null),
+    });
 
     const response = await request(app).get("/shipment/NON-EXISTENT");
 
@@ -135,5 +140,38 @@ describe("End-to-End CQRS Event Projection & Query Lifecycle", () => {
     expect(response.body.algorithm).toBe("SHA-256");
     expect(response.body.stateFingerprint).toBeDefined();
     expect(response.body.stateFingerprint).toHaveLength(64);
+  });
+
+  test("GET /projection/lag calculates sync latency between events and read models", async () => {
+    const now = new Date();
+
+    // Mock AuditEvent model to prevent hanging DB calls
+    const mockAuditEvent = {
+      findOne: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            timestamp: now,
+          }),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
+
+    ShipmentReadModel.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          lastUpdated: new Date(now.getTime() - 1000),
+        }),
+      }),
+    });
+
+    const response = await request(app).get("/projection/lag");
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.status).toBe("OPTIMAL");
+    expect(typeof response.body.data.lagMs).toBe("number");
+
+    mongoose.model.mockRestore();
   });
 });

@@ -12,6 +12,50 @@ function computeStateFingerprint(shipmentId, status, location, version) {
 }
 
 /**
+ * GET /projection/lag
+ * Evaluates replication lag between the write store (AuditEvent) and ReadModel
+ */
+router.get("/projection/lag", async (req, res) => {
+  try {
+    const AuditEvent =
+      mongoose.models.AuditEvent ||
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
+
+    let latestEventQuery = AuditEvent.findOne().sort({ timestamp: -1 });
+    if (latestEventQuery && typeof latestEventQuery.lean === "function") {
+      latestEventQuery = latestEventQuery.lean();
+    }
+    const latestEvent = await latestEventQuery;
+
+    let latestReadQuery = ShipmentReadModel.findOne().sort({ lastUpdated: -1 });
+    if (latestReadQuery && typeof latestReadQuery.lean === "function") {
+      latestReadQuery = latestReadQuery.lean();
+    }
+    const latestReadModel = await latestReadQuery;
+
+    const eventTime = latestEvent?.timestamp ? new Date(latestEvent.timestamp).getTime() : null;
+    const projectionTime = latestReadModel?.lastUpdated ? new Date(latestReadModel.lastUpdated).getTime() : null;
+
+    const lagMs = eventTime && projectionTime ? Math.max(0, eventTime - projectionTime) : 0;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        status: lagMs < 5000 ? "OPTIMAL" : "CATCHING_UP",
+        lagMs,
+        lastEventTimestamp: latestEvent?.timestamp || null,
+        lastProjectedTimestamp: latestReadModel?.lastUpdated || null,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
  * GET /shipment/:id/state
  * Point-in-time state reconstruction using chronological events up to query param 'at'
  */
@@ -56,7 +100,6 @@ router.get("/shipment/:id/state", async (req, res) => {
       });
     }
 
-    // Replay state up to target timestamp
     const state = {
       shipmentId: id,
       currentStatus: "CREATED",
