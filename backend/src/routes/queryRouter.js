@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 const crypto = require("crypto");
 const ShipmentReadModel = require("../models/readModel");
 const cacheService = require("../services/cacheService");
-const { applyEventToReadModel } = require("../workers/projectionWorker");
+const { applyEventToReadModel, applyBatchEvents } = require("../workers/projectionWorker");
 
 function computeStateFingerprint(shipmentId, status, location, version) {
   const payload = `${shipmentId}|${status}|${location}|${version}`;
@@ -45,6 +45,51 @@ router.get("/projection/lag", async (req, res) => {
         lagMs,
         lastEventTimestamp: latestEvent?.timestamp || null,
         lastProjectedTimestamp: latestReadModel?.lastUpdated || null,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /projection/rebuild-all
+ * Disaster recovery route: wipes all read models and replays every event chronologically
+ */
+router.post("/projection/rebuild-all", async (req, res) => {
+  try {
+    const AuditEvent =
+      mongoose.models.AuditEvent ||
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
+
+    let query = AuditEvent.find().sort({ version: 1 });
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+    const allEvents = await query;
+
+    if (!allEvents || allEvents.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No audit events found to rebuild projections.",
+      });
+    }
+
+    cacheService.clear();
+    await ShipmentReadModel.deleteMany({});
+
+    const processedCount = await applyBatchEvents(allEvents);
+    const totalRebuilt = await ShipmentReadModel.countDocuments();
+
+    return res.status(200).json({
+      success: true,
+      message: `Full system rebuild completed. Replayed ${processedCount} events across ${totalRebuilt} shipment records.`,
+      metrics: {
+        eventsReplayed: processedCount,
+        readModelsGenerated: totalRebuilt,
       },
     });
   } catch (error) {
@@ -116,18 +161,22 @@ router.get("/shipment/:id/state", async (req, res) => {
       switch (event.eventType) {
         case "SHIPMENT_CREATED":
           state.currentStatus = "CREATED";
-          state.location = event.payload?.origin || state.location;
+          state.location = event.payload?.location || event.payload?.origin || state.location;
           break;
         case "SHIPMENT_MOVED":
           state.currentStatus = "IN_TRANSIT";
           state.location =
+            event.payload?.location ||
             event.payload?.currentLocation ||
             event.payload?.destination ||
             state.location;
           break;
         case "SHIPMENT_DELIVERED":
           state.currentStatus = "DELIVERED";
-          state.location = event.payload?.destination || state.location;
+          state.location =
+            event.payload?.location ||
+            event.payload?.destination ||
+            state.location;
           break;
         case "TEMPERATURE_SPIKE":
           state.temperature = event.payload?.temperature;
@@ -146,6 +195,7 @@ router.get("/shipment/:id/state", async (req, res) => {
         shipmentId: id,
         requestedAt: targetDate.toISOString(),
         eventsApplied: events.length,
+        source: "EVENT_REPLAY",
         state,
       },
     });
@@ -372,7 +422,7 @@ router.get("/shipment/:id", async (req, res) => {
 
 /**
  * POST /projection/rebuild/:id
- * Replays history and invalidates existing cache
+ * Replays history and invalidates existing cache for a single aggregate
  */
 router.post("/projection/rebuild/:id", async (req, res) => {
   try {

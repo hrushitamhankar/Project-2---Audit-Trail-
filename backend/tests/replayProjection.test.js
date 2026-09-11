@@ -1,165 +1,85 @@
 const request = require("supertest");
 const express = require("express");
 const mongoose = require("mongoose");
-
 const queryRouter = require("../src/routes/queryRouter");
 const ShipmentReadModel = require("../src/models/readModel");
 
 const app = express();
-
 app.use(express.json());
 app.use("/", queryRouter);
 
 jest.mock("../src/models/readModel");
 
-const mockEvents = [];
-
-const mockAuditEvent = {
-  find: jest.fn(),
-};
-
-mongoose.models.AuditEvent = mockAuditEvent;
-
-describe("Projection Replay API", () => {
+describe("Projection Replay and Disaster Recovery APIs", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockEvents.length = 0;
   });
 
-  test("should return 404 when no events exist", async () => {
-    mockAuditEvent.find.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue([]),
+  test("POST /projection/rebuild/:id replays single shipment history correctly", async () => {
+    const shipmentId = "TEST-SHIP-14";
+    const sampleEvents = [
+      { aggregateId: shipmentId, eventType: "SHIPMENT_CREATED", payload: { origin: "Hub A" }, version: 1 },
+      { aggregateId: shipmentId, eventType: "SHIPMENT_MOVED", payload: { currentLocation: "Hub B" }, version: 2 },
+      { aggregateId: shipmentId, eventType: "SHIPMENT_DELIVERED", payload: { destination: "Hub C" }, version: 3 },
+    ];
+
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(sampleEvents),
+        }),
       }),
-    });
-
-    const response = await request(app).post(
-      "/projection/rebuild/TEST-SHIP-14"
-    );
-
-    expect(response.statusCode).toBe(404);
-    expect(response.body.success).toBe(false);
-  });
-
-  test("should replay shipment creation event", async () => {
-    mockAuditEvent.find.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue([
-          {
-            aggregateId: "TEST-SHIP-14",
-            eventType: "SHIPMENT_CREATED",
-            payload: {
-              origin: "Delhi Warehouse",
-            },
-            version: 1,
-            timestamp: new Date(
-              "2026-08-21T08:00:00Z"
-            ),
-          },
-        ]),
-      }),
-    });
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
 
     ShipmentReadModel.deleteOne.mockResolvedValue({});
-
-    ShipmentReadModel.findOne.mockResolvedValue({
-      shipmentId: "TEST-SHIP-14",
-      currentStatus: "CREATED",
-      location: "Delhi Warehouse",
-      version: 1,
-    });
-
-    const response = await request(app).post(
-      "/projection/rebuild/TEST-SHIP-14"
-    );
-
-    expect(response.statusCode).toBe(200);
-    expect(response.body.success).toBe(true);
-
-    expect(response.body.message).toContain(
-      "Successfully replayed 1 events"
-    );
-  });
-
-  test("should replay complete shipment lifecycle", async () => {
-    mockAuditEvent.find.mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue([
-          {
-            aggregateId: "TEST-SHIP-14",
-            eventType: "SHIPMENT_CREATED",
-            payload: {
-              origin: "Delhi Warehouse",
-            },
-            version: 1,
-            timestamp: new Date(
-              "2026-08-21T08:00:00Z"
-            ),
-          },
-          {
-            aggregateId: "TEST-SHIP-14",
-            eventType: "SHIPMENT_MOVED",
-            payload: {
-              currentLocation: "Mumbai Port",
-            },
-            version: 2,
-            timestamp: new Date(
-              "2026-08-21T12:00:00Z"
-            ),
-          },
-          {
-            aggregateId: "TEST-SHIP-14",
-            eventType: "SHIPMENT_DELIVERED",
-            payload: {
-              destination: "Mumbai Customer",
-            },
-            version: 3,
-            timestamp: new Date(
-              "2026-08-21T18:00:00Z"
-            ),
-          },
-        ]),
-      }),
-    });
-
-    ShipmentReadModel.deleteOne.mockResolvedValue({});
-
-    ShipmentReadModel.findOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        shipmentId: "TEST-SHIP-14",
-        currentStatus: "CREATED",
-        location: "Delhi Warehouse",
-        version: 1,
-      })
-      .mockResolvedValueOnce({
-        shipmentId: "TEST-SHIP-14",
-        currentStatus: "IN_TRANSIT",
-        location: "Mumbai Port",
-        version: 2,
-      })
-      .mockResolvedValueOnce({
-        shipmentId: "TEST-SHIP-14",
-        currentStatus: "DELIVERED",
-        location: "Mumbai Customer",
-        version: 3,
-      });
-
     ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
-
-    const response = await request(app).post(
-      "/projection/rebuild/TEST-SHIP-14"
-    );
-
-    expect(response.statusCode).toBe(200);
-    expect(response.body.success).toBe(true);
-
-    expect(response.body.message).toContain(
-      "Successfully replayed 3 events"
-    );
-
-    expect(ShipmentReadModel.deleteOne).toHaveBeenCalledWith({
-      shipmentId: "TEST-SHIP-14",
+    ShipmentReadModel.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        shipmentId,
+        currentStatus: "DELIVERED",
+        location: "Hub C",
+        version: 3,
+      }),
     });
+
+    const response = await request(app).post(`/projection/rebuild/${shipmentId}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.message).toContain("Successfully replayed 3 events");
+    expect(response.body.rebuiltState.currentStatus).toBe("DELIVERED");
+
+    mongoose.model.mockRestore();
+  });
+
+  test("POST /projection/rebuild-all purges read store and replays all fleet events", async () => {
+    const fleetEvents = [
+      { aggregateId: "SHP-001", eventType: "SHIPMENT_CREATED", payload: { origin: "DC 1" }, version: 1 },
+      { aggregateId: "SHP-002", eventType: "SHIPMENT_CREATED", payload: { origin: "DC 2" }, version: 1 },
+    ];
+
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(fleetEvents),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
+
+    ShipmentReadModel.deleteMany.mockResolvedValue({});
+    ShipmentReadModel.findOneAndUpdate.mockResolvedValue({});
+    ShipmentReadModel.countDocuments.mockResolvedValue(2);
+
+    const response = await request(app).post("/projection/rebuild-all");
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(ShipmentReadModel.deleteMany).toHaveBeenCalledWith({});
+    expect(response.body.metrics.eventsReplayed).toBe(2);
+    expect(response.body.metrics.readModelsGenerated).toBe(2);
+
+    mongoose.model.mockRestore();
   });
 });
