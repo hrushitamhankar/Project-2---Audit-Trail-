@@ -2,13 +2,9 @@ const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
 const crypto = require("crypto");
-
 const ShipmentReadModel = require("../models/readModel");
 const cacheService = require("../services/cacheService");
-const {
-  applyEventToReadModel,
-  applyBatchEvents,
-} = require("../workers/projectionWorker");
+const { applyEventToReadModel, applyBatchEvents } = require("../workers/projectionWorker");
 
 function computeStateFingerprint(shipmentId, status, location, version) {
   const payload = `${shipmentId}|${status}|${location}|${version}`;
@@ -17,54 +13,30 @@ function computeStateFingerprint(shipmentId, status, location, version) {
 
 /**
  * GET /projection/lag
+ * Evaluates replication lag between the write store (AuditEvent) and ReadModel
  */
 router.get("/projection/lag", async (req, res) => {
   try {
     const AuditEvent =
       mongoose.models.AuditEvent ||
-      mongoose.model(
-        "AuditEvent",
-        new mongoose.Schema({}, { strict: false })
-      );
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
-    let latestEventQuery = AuditEvent.findOne().sort({
-      timestamp: -1,
-    });
-
-    if (
-      latestEventQuery &&
-      typeof latestEventQuery.lean === "function"
-    ) {
+    let latestEventQuery = AuditEvent.findOne().sort({ timestamp: -1 });
+    if (latestEventQuery && typeof latestEventQuery.lean === "function") {
       latestEventQuery = latestEventQuery.lean();
     }
-
     const latestEvent = await latestEventQuery;
 
-    let latestReadQuery = ShipmentReadModel.findOne().sort({
-      lastUpdated: -1,
-    });
-
-    if (
-      latestReadQuery &&
-      typeof latestReadQuery.lean === "function"
-    ) {
+    let latestReadQuery = ShipmentReadModel.findOne().sort({ lastUpdated: -1 });
+    if (latestReadQuery && typeof latestReadQuery.lean === "function") {
       latestReadQuery = latestReadQuery.lean();
     }
-
     const latestReadModel = await latestReadQuery;
 
-    const eventTime = latestEvent?.timestamp
-      ? new Date(latestEvent.timestamp).getTime()
-      : null;
+    const eventTime = latestEvent?.timestamp ? new Date(latestEvent.timestamp).getTime() : null;
+    const projectionTime = latestReadModel?.lastUpdated ? new Date(latestReadModel.lastUpdated).getTime() : null;
 
-    const projectionTime = latestReadModel?.lastUpdated
-      ? new Date(latestReadModel.lastUpdated).getTime()
-      : null;
-
-    const lagMs =
-      eventTime && projectionTime
-        ? Math.max(0, eventTime - projectionTime)
-        : 0;
+    const lagMs = eventTime && projectionTime ? Math.max(0, eventTime - projectionTime) : 0;
 
     return res.status(200).json({
       success: true,
@@ -72,8 +44,7 @@ router.get("/projection/lag", async (req, res) => {
         status: lagMs < 5000 ? "OPTIMAL" : "CATCHING_UP",
         lagMs,
         lastEventTimestamp: latestEvent?.timestamp || null,
-        lastProjectedTimestamp:
-          latestReadModel?.lastUpdated || null,
+        lastProjectedTimestamp: latestReadModel?.lastUpdated || null,
       },
     });
   } catch (error) {
@@ -86,27 +57,18 @@ router.get("/projection/lag", async (req, res) => {
 
 /**
  * POST /projection/rebuild-all
- *
- * Disaster recovery route:
- * Deletes all read models and replays every audit event.
+ * Disaster recovery route: wipes all read models and replays every event chronologically
  */
 router.post("/projection/rebuild-all", async (req, res) => {
   try {
     const AuditEvent =
       mongoose.models.AuditEvent ||
-      mongoose.model(
-        "AuditEvent",
-        new mongoose.Schema({}, { strict: false })
-      );
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
-    let query = AuditEvent.find().sort({
-      version: 1,
-    });
-
+    let query = AuditEvent.find().sort({ version: 1 });
     if (query && typeof query.lean === "function") {
       query = query.lean();
     }
-
     const allEvents = await query;
 
     if (!allEvents || allEvents.length === 0) {
@@ -117,13 +79,10 @@ router.post("/projection/rebuild-all", async (req, res) => {
     }
 
     cacheService.clear();
-
     await ShipmentReadModel.deleteMany({});
 
     const processedCount = await applyBatchEvents(allEvents);
-
-    const totalRebuilt =
-      await ShipmentReadModel.countDocuments();
+    const totalRebuilt = await ShipmentReadModel.countDocuments();
 
     return res.status(200).json({
       success: true,
@@ -143,8 +102,7 @@ router.post("/projection/rebuild-all", async (req, res) => {
 
 /**
  * GET /shipment/:id/state
- *
- * Reconstruct shipment state at a specific point in time.
+ * Point-in-time state reconstruction using chronological events up to query param 'at'
  */
 router.get("/shipment/:id/state", async (req, res) => {
   try {
@@ -159,8 +117,7 @@ router.get("/shipment/:id/state", async (req, res) => {
     }
 
     const targetDate = new Date(at);
-
-    if (Number.isNaN(targetDate.getTime())) {
+    if (isNaN(targetDate.getTime())) {
       return res.status(400).json({
         success: false,
         message: "Invalid timestamp provided.",
@@ -169,24 +126,16 @@ router.get("/shipment/:id/state", async (req, res) => {
 
     const AuditEvent =
       mongoose.models.AuditEvent ||
-      mongoose.model(
-        "AuditEvent",
-        new mongoose.Schema({}, { strict: false })
-      );
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
     let query = AuditEvent.find({
       aggregateId: id,
-      timestamp: {
-        $lte: targetDate,
-      },
-    }).sort({
-      version: 1,
-    });
+      timestamp: { $lte: targetDate },
+    }).sort({ version: 1 });
 
     if (query && typeof query.lean === "function") {
       query = query.lean();
     }
-
     const events = await query;
 
     if (!events || events.length === 0) {
@@ -205,80 +154,36 @@ router.get("/shipment/:id/state", async (req, res) => {
       lastUpdated: null,
     };
 
-    /*
-     * Replay every event up to the requested timestamp.
-     */
     for (const event of events) {
-      let payload = event.payload || {};
-
-      /*
-       * Support payload stored as a JSON string.
-       */
-      if (typeof payload === "string") {
-        try {
-          payload = JSON.parse(payload);
-        } catch {
-          payload = {};
-        }
-      }
-
-      state.version =
-        event.version !== undefined &&
-        event.version !== null
-          ? event.version
-          : state.version + 1;
-
+      state.version = event.version || state.version + 1;
       state.lastUpdated = event.timestamp;
 
       switch (event.eventType) {
         case "SHIPMENT_CREATED":
           state.currentStatus = "CREATED";
-
-          state.location =
-            payload.origin ||
-            payload.location ||
-            payload.currentLocation ||
-            "Origin Facility";
-
+          state.location = event.payload?.location || event.payload?.origin || state.location;
           break;
-
         case "SHIPMENT_MOVED":
           state.currentStatus = "IN_TRANSIT";
-
-          /*
-           * Support all common movement payload formats.
-           * payload.location is especially important for
-           * the historical/time-travel tests.
-           */
           state.location =
-            payload.location ||
-            payload.currentLocation ||
-            payload.destination ||
-            payload.to ||
-            "In Transit";
-
+            event.payload?.location ||
+            event.payload?.currentLocation ||
+            event.payload?.destination ||
+            state.location;
           break;
-
         case "SHIPMENT_DELIVERED":
           state.currentStatus = "DELIVERED";
-
           state.location =
-            payload.destination ||
-            payload.location ||
-            payload.currentLocation ||
+            event.payload?.location ||
+            event.payload?.destination ||
             state.location;
-
           break;
-
         case "TEMPERATURE_SPIKE":
-          state.temperature = payload.temperature;
-
-          if (Number(payload.temperature) > 8.0) {
+          state.temperature = event.payload?.temperature;
+          if (event.payload?.temperature > 8.0) {
             state.currentStatus = "ALERT";
           }
-
           break;
-
         default:
           break;
       }
@@ -289,11 +194,8 @@ router.get("/shipment/:id/state", async (req, res) => {
       data: {
         shipmentId: id,
         requestedAt: targetDate.toISOString(),
-
-        // Historical state was reconstructed by replaying events.
-        source: "EVENT_REPLAY",
-
         eventsApplied: events.length,
+        source: "EVENT_REPLAY",
         state,
       },
     });
@@ -307,41 +209,24 @@ router.get("/shipment/:id/state", async (req, res) => {
 
 /**
  * GET /shipments
+ * List read-model shipments with pagination, status filter, and aggregate search
  */
 router.get("/shipments", async (req, res) => {
   try {
-    const page = Math.max(
-      1,
-      parseInt(req.query.page, 10) || 1
-    );
-
-    const limit = Math.max(
-      1,
-      Math.min(
-        100,
-        parseInt(req.query.limit, 10) || 10
-      )
-    );
-
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
 
     const filter = {};
-
     if (req.query.status) {
       filter.currentStatus = req.query.status;
     }
-
     if (req.query.search) {
-      filter.shipmentId = {
-        $regex: req.query.search,
-        $options: "i",
-      };
+      filter.shipmentId = { $regex: req.query.search, $options: "i" };
     }
 
     let query = ShipmentReadModel.find(filter)
-      .sort({
-        lastUpdated: -1,
-      })
+      .sort({ lastUpdated: -1 })
       .skip(skip)
       .limit(limit);
 
@@ -374,74 +259,59 @@ router.get("/shipments", async (req, res) => {
 
 /**
  * GET /shipment/analytics/summary
+ * Aggregates read-model metrics across all tracked shipments
  */
-router.get(
-  "/shipment/analytics/summary",
-  async (req, res) => {
-    try {
-      const summary =
-        await ShipmentReadModel.aggregate([
-          {
-            $group: {
-              _id: "$currentStatus",
-              count: {
-                $sum: 1,
-              },
-            },
-          },
-        ]);
+router.get("/shipment/analytics/summary", async (req, res) => {
+  try {
+    const summary = await ShipmentReadModel.aggregate([
+      {
+        $group: {
+          _id: "$currentStatus",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
 
-      const formattedSummary = {
-        total: 0,
-        CREATED: 0,
-        IN_TRANSIT: 0,
-        DELIVERED: 0,
-        ALERT: 0,
-      };
+    const formattedSummary = {
+      total: 0,
+      CREATED: 0,
+      IN_TRANSIT: 0,
+      DELIVERED: 0,
+      ALERT: 0,
+    };
 
-      if (Array.isArray(summary)) {
-        summary.forEach((item) => {
-          if (
-            item._id &&
-            formattedSummary[item._id] !== undefined
-          ) {
-            formattedSummary[item._id] = item.count;
-          }
-
-          formattedSummary.total += item.count;
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        data: formattedSummary,
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        error: error.message,
+    if (Array.isArray(summary)) {
+      summary.forEach((item) => {
+        if (item._id && formattedSummary[item._id] !== undefined) {
+          formattedSummary[item._id] = item.count;
+        }
+        formattedSummary.total += item.count;
       });
     }
+
+    return res.status(200).json({
+      success: true,
+      data: formattedSummary,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
-);
+});
 
 /**
  * GET /shipment/:id/verify
- *
- * Computes deterministic SHA-256 state fingerprint.
+ * Computes deterministic cryptographic state fingerprint
  */
 router.get("/shipment/:id/verify", async (req, res) => {
   try {
     const { id } = req.params;
-
-    let query = ShipmentReadModel.findOne({
-      shipmentId: id,
-    });
-
+    let query = ShipmentReadModel.findOne({ shipmentId: id });
     if (query && typeof query.lean === "function") {
       query = query.lean();
     }
-
     const shipment = await query;
 
     if (!shipment) {
@@ -476,30 +346,19 @@ router.get("/shipment/:id/verify", async (req, res) => {
 
 /**
  * GET /shipment/:id/events
- *
- * Returns raw chronological audit log.
+ * Returns raw chronological audit log for a shipment
  */
 router.get("/shipment/:id/events", async (req, res) => {
   try {
     const { id } = req.params;
-
     const AuditEvent =
       mongoose.models.AuditEvent ||
-      mongoose.model(
-        "AuditEvent",
-        new mongoose.Schema({}, { strict: false })
-      );
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
-    let query = AuditEvent.find({
-      aggregateId: id,
-    }).sort({
-      version: 1,
-    });
-
+    let query = AuditEvent.find({ aggregateId: id }).sort({ version: 1 });
     if (query && typeof query.lean === "function") {
       query = query.lean();
     }
-
     const events = await query;
 
     return res.status(200).json({
@@ -518,15 +377,13 @@ router.get("/shipment/:id/events", async (req, res) => {
 
 /**
  * GET /shipment/:id
- *
- * Fast query path with cache.
+ * Fast query path with in-memory cache check
  */
 router.get("/shipment/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
     const cachedData = cacheService.get(id);
-
     if (cachedData) {
       return res.status(200).json({
         success: true,
@@ -535,14 +392,10 @@ router.get("/shipment/:id", async (req, res) => {
       });
     }
 
-    let query = ShipmentReadModel.findOne({
-      shipmentId: id,
-    });
-
+    let query = ShipmentReadModel.findOne({ shipmentId: id });
     if (query && typeof query.lean === "function") {
       query = query.lean();
     }
-
     const shipment = await query;
 
     if (!shipment) {
@@ -569,90 +422,64 @@ router.get("/shipment/:id", async (req, res) => {
 
 /**
  * POST /projection/rebuild/:id
- *
- * Replays history and invalidates cache for a single aggregate.
+ * Replays history and invalidates existing cache for a single aggregate
  */
-router.post(
-  "/projection/rebuild/:id",
-  async (req, res) => {
-    try {
-      const { id } = req.params;
+router.post("/projection/rebuild/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const AuditEvent =
+      mongoose.models.AuditEvent ||
+      mongoose.model("AuditEvent", new mongoose.Schema({}, { strict: false }));
 
-      const AuditEvent =
-        mongoose.models.AuditEvent ||
-        mongoose.model(
-          "AuditEvent",
-          new mongoose.Schema({}, { strict: false })
-        );
+    let query = AuditEvent.find({ aggregateId: id }).sort({ version: 1 });
+    if (query && typeof query.lean === "function") {
+      query = query.lean();
+    }
+    const events = await query;
 
-      let query = AuditEvent.find({
-        aggregateId: id,
-      }).sort({
-        version: 1,
-      });
-
-      if (query && typeof query.lean === "function") {
-        query = query.lean();
-      }
-
-      const events = await query;
-
-      if (!events || events.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: `No events found to replay for aggregate ID: ${id}`,
-        });
-      }
-
-      cacheService.invalidate(id);
-
-      await ShipmentReadModel.deleteOne({
-        shipmentId: id,
-      });
-
-      for (const event of events) {
-        await applyEventToReadModel(event);
-      }
-
-      let rebuiltQuery = ShipmentReadModel.findOne({
-        shipmentId: id,
-      });
-
-      if (
-        rebuiltQuery &&
-        typeof rebuiltQuery.lean === "function"
-      ) {
-        rebuiltQuery = rebuiltQuery.lean();
-      }
-
-      const rebuiltModel = await rebuiltQuery;
-
-      return res.status(200).json({
-        success: true,
-        message: `Successfully replayed ${events.length} events for ${id}`,
-        rebuiltState: rebuiltModel,
-      });
-    } catch (error) {
-      return res.status(500).json({
+    if (!events || events.length === 0) {
+      return res.status(404).json({
         success: false,
-        error: error.message,
+        message: `No events found to replay for aggregate ID: ${id}`,
       });
     }
+
+    cacheService.invalidate(id);
+    await ShipmentReadModel.deleteOne({ shipmentId: id });
+
+    for (const event of events) {
+      await applyEventToReadModel(event);
+    }
+
+    let rebuiltQuery = ShipmentReadModel.findOne({ shipmentId: id });
+    if (rebuiltQuery && typeof rebuiltQuery.lean === "function") {
+      rebuiltQuery = rebuiltQuery.lean();
+    }
+    const rebuiltModel = await rebuiltQuery;
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully replayed ${events.length} events for ${id}`,
+      rebuiltState: rebuiltModel,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
-);
+});
 
 /**
  * GET /projection/health
+ * Comprehensive operational health status including cache size and replication sync
  */
 router.get("/projection/health", async (req, res) => {
   try {
-    const totalReadModels =
-      await ShipmentReadModel.countDocuments();
-
-    const alertCount =
-      await ShipmentReadModel.countDocuments({
-        currentStatus: "ALERT",
-      });
+    const totalReadModels = await ShipmentReadModel.countDocuments();
+    const alertCount = await ShipmentReadModel.countDocuments({
+      currentStatus: "ALERT",
+    });
 
     return res.status(200).json({
       success: true,
@@ -661,8 +488,7 @@ router.get("/projection/health", async (req, res) => {
         totalShipmentsProjected: totalReadModels,
         criticalAlertsActive: alertCount,
         cachedEntriesCount: cacheService.size(),
-        workerSyncMode:
-          "Live Change Streams / Polling",
+        workerSyncMode: "Live Change Streams / Polling",
       },
     });
   } catch (error) {
