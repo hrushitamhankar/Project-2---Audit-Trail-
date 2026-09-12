@@ -75,11 +75,23 @@ export async function getShipmentStateAt(id, timestamp) {
   await simulateDelay();
   const events = MOCK_EVENTS[id];
   if (!events) throw new Error(`No events found for shipment "${id}"`);
-  const relevantEvents = events.filter((e) => new Date(e.timestamp) <= new Date(timestamp));
+  const requestedTime = new Date(timestamp).getTime();
+  const relevantEvents = events.filter((e) => new Date(e.timestamp).getTime() <= requestedTime);
+
+  if (relevantEvents.length === 0) {
+    return {
+      aggregateId: id,
+      asOf: timestamp,
+      eventsApplied: 0,
+      lastEvent: null,
+      note: 'No events had occurred yet at this point in time.',
+    };
+  }
+
   return {
     aggregateId: id,
     asOf: timestamp,
     eventsApplied: relevantEvents.length,
-    lastEvent: relevantEvents[relevantEvents.length - 1] || null,
+    lastEvent: relevantEvents[relevantEvents.length - 1],
   };
 }

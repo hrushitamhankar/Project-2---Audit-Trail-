@@ -478,3 +478,9 @@
   border-color: #d4460b;
   color: #d4460b;
 }
+
+.historical-note {
+  border-color: #999;
+  color: #666;
+  font-style: italic;
+}

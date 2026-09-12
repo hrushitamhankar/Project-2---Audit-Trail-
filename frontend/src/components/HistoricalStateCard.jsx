@@ -24,6 +24,15 @@ function HistoricalStateCard({ state, isLoading, error }) {
 
   if (!state) return null;
 
+  if (state.eventsApplied === 0) {
+    return (
+      <div className="historical-card historical-note">
+        <h4>State as of {formatTimestamp(state.asOf)}</h4>
+        <p>{state.note || 'No events had occurred yet at this point in time.'}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="historical-card">
       <h4>State as of {formatTimestamp(state.asOf)}</h4>

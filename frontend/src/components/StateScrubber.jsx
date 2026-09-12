@@ -1,5 +1,5 @@
 // src/components/StateScrubber.jsx
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 function formatDateTime(date) {
   if (!date) return '—';
@@ -16,13 +16,26 @@ function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false })
   const maxTime = Math.max(...timestamps);
 
   const [selectedTime, setSelectedTime] = useState(maxTime);
+  const debounceTimer = useRef(null);
   const selectedDate = new Date(selectedTime);
+
+  // Clean up any pending debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, []);
 
   const handleSliderChange = (e) => {
     const newTime = parseInt(e.target.value, 10);
-    setSelectedTime(newTime);
-    const isLive = newTime === maxTime;
-    onTimestampChange(new Date(newTime).toISOString(), isLive);
+    setSelectedTime(newTime); // update UI immediately - feels responsive
+
+    // Debounce the actual API-triggering callback
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      const isLive = newTime === maxTime;
+      onTimestampChange(new Date(newTime).toISOString(), isLive);
+    }, 400); // wait 400ms after user stops moving the slider
   };
 
   const isViewingLive = selectedTime === maxTime;
@@ -67,6 +80,7 @@ function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false })
         <button
           className="scrubber-return-live"
           onClick={() => {
+            if (debounceTimer.current) clearTimeout(debounceTimer.current);
             setSelectedTime(maxTime);
             onTimestampChange(new Date(maxTime).toISOString(), true);
           }}
