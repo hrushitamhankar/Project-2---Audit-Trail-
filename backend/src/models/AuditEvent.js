@@ -21,6 +21,11 @@ const auditEventSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+
+    version: {
+      type: Number,
+      required: true,
+    },
   },
   {
     versionKey: false,
