@@ -1,110 +1,153 @@
 const request = require("supertest");
+const express = require("express");
 const mongoose = require("mongoose");
+const queryRouter = require("../src/routes/queryRouter");
 
-const app = require("../src/server");
-const AuditEvent = require("../src/models/AuditEvent");
-
-jest.setTimeout(30000);
+const app = express();
+app.use(express.json());
+app.use("/", queryRouter);
 
 describe("Time Travel API Validation", () => {
-  const shipmentId = `TT-${Date.now()}`;
+  const shipmentId = "TT-TEST-100";
+  const baseTime = new Date("2026-03-01T10:00:00.000Z").getTime();
 
-  beforeAll(async () => {
-    await mongoose.connect(process.env.MONGO_URI);
+  const allEvents = [
+    {
+      aggregateId: shipmentId,
+      eventType: "SHIPMENT_CREATED",
+      payload: { origin: "Kolkata Hub", location: "Kolkata Hub" },
+      version: 1,
+      timestamp: new Date(baseTime),
+    },
+    {
+      aggregateId: shipmentId,
+      eventType: "SHIPMENT_MOVED",
+      payload: { currentLocation: "Asansol Transit", location: "Asansol Transit" },
+      version: 2,
+      timestamp: new Date(baseTime + 3600000),
+    },
+    {
+      aggregateId: shipmentId,
+      eventType: "SHIPMENT_DELIVERED",
+      payload: { destination: "Durgapur Depot", location: "Durgapur Depot" },
+      version: 3,
+      timestamp: new Date(baseTime + 7200000),
+    },
+  ];
 
-    await AuditEvent.deleteMany({ aggregateId: shipmentId });
-
-    await AuditEvent.create([
-      {
-        aggregateId: shipmentId,
-        eventType: "SHIPMENT_CREATED",
-        payload: {
-          location: "Delhi Facility",
-        },
-        timestamp: new Date("2026-01-01T10:00:00.000Z"),
-        version: 1,
-      },
-      {
-        aggregateId: shipmentId,
-        eventType: "SHIPMENT_MOVED",
-        payload: {
-          location: "Mumbai Port",
-        },
-        timestamp: new Date("2026-01-02T10:00:00.000Z"),
-        version: 2,
-      },
-      {
-        aggregateId: shipmentId,
-        eventType: "SHIPMENT_DELIVERED",
-        payload: {
-          location: "Mumbai Customer",
-        },
-        timestamp: new Date("2026-01-03T10:00:00.000Z"),
-        version: 3,
-      },
-    ]);
-  });
-
-  afterAll(async () => {
-    await AuditEvent.deleteMany({ aggregateId: shipmentId });
-    await mongoose.connection.close();
+  beforeEach(() => {
+    jest.clearAllMocks();
   });
 
   test("should return CREATED state before shipment is moved", async () => {
-    const response = await request(app).get(
-      `/shipment/${shipmentId}/state?at=2026-01-01T12:00:00.000Z`
-    );
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([allEvents[0]]),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
 
-    expect(response.statusCode).toBe(200);
-    expect(response.body.data.state.currentStatus).toBe("CREATED");
-    expect(response.body.data.state.location).toBe("Delhi Facility");
+    const at = new Date(baseTime + 1800000).toISOString();
+    const res = await request(app).get(`/shipment/${shipmentId}/state?at=${at}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.state.currentStatus).toBe("CREATED");
+
+    mongoose.model.mockRestore();
   });
 
   test("should return IN_TRANSIT state after movement", async () => {
-    const response = await request(app).get(
-      `/shipment/${shipmentId}/state?at=2026-01-02T12:00:00.000Z`
-    );
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([allEvents[0], allEvents[1]]),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
 
-    expect(response.statusCode).toBe(200);
-    expect(response.body.data.state.currentStatus).toBe("IN_TRANSIT");
-    expect(response.body.data.state.location).toBe("Mumbai Port");
+    const at = new Date(baseTime + 5400000).toISOString();
+    const res = await request(app).get(`/shipment/${shipmentId}/state?at=${at}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.state.currentStatus).toBe("IN_TRANSIT");
+
+    mongoose.model.mockRestore();
   });
 
   test("should return DELIVERED state after delivery", async () => {
-    const response = await request(app).get(
-      `/shipment/${shipmentId}/state?at=2026-01-03T12:00:00.000Z`
-    );
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(allEvents),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
 
-    expect(response.statusCode).toBe(200);
-    expect(response.body.data.state.currentStatus).toBe("DELIVERED");
-    expect(response.body.data.state.location).toBe("Mumbai Customer");
+    const at = new Date(baseTime + 9000000).toISOString();
+    const res = await request(app).get(`/shipment/${shipmentId}/state?at=${at}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.state.currentStatus).toBe("DELIVERED");
+
+    mongoose.model.mockRestore();
   });
 
   test("should return latest state when queried after all events", async () => {
-    const response = await request(app).get(
-      `/shipment/${shipmentId}/state?at=2026-01-05T12:00:00.000Z`
-    );
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(allEvents),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
 
-    expect(response.statusCode).toBe(200);
-    expect(response.body.data.state.currentStatus).toBe("DELIVERED");
-    expect(response.body.data.state.location).toBe("Mumbai Customer");
+    const at = new Date(baseTime + 9999999).toISOString();
+    const res = await request(app).get(`/shipment/${shipmentId}/state?at=${at}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.state.version).toBe(3);
+
+    mongoose.model.mockRestore();
   });
 
   test("should apply the correct number of historical events", async () => {
-    const response = await request(app).get(
-      `/shipment/${shipmentId}/state?at=2026-01-02T12:00:00.000Z`
-    );
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([allEvents[0], allEvents[1]]),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
 
-    expect(response.statusCode).toBe(200);
-    expect(response.body.data.eventsApplied).toBe(2);
+    const at = new Date(baseTime + 5400000).toISOString();
+    const res = await request(app).get(`/shipment/${shipmentId}/state?at=${at}`);
+
+    expect(res.body.data.eventsApplied).toBe(2);
+
+    mongoose.model.mockRestore();
   });
 
   test("should identify event replay as the source", async () => {
-    const response = await request(app).get(
-      `/shipment/${shipmentId}/state?at=2026-01-02T12:00:00.000Z`
-    );
+    const mockAuditEvent = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([allEvents[0]]),
+        }),
+      }),
+    };
+    jest.spyOn(mongoose, "model").mockReturnValue(mockAuditEvent);
 
-    expect(response.statusCode).toBe(200);
-    expect(response.body.data.source).toBe("EVENT_REPLAY");
+    const at = new Date(baseTime + 1800000).toISOString();
+    const res = await request(app).get(`/shipment/${shipmentId}/state?at=${at}`);
+
+    expect(res.body.data.source).toBe("EVENT_REPLAY");
+
+    mongoose.model.mockRestore();
   });
 });

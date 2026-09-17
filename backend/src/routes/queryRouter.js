@@ -4,12 +4,36 @@ const mongoose = require("mongoose");
 const crypto = require("crypto");
 const ShipmentReadModel = require("../models/readModel");
 const cacheService = require("../services/cacheService");
+const sseService = require("../services/sseService");
 const { applyEventToReadModel, applyBatchEvents } = require("../workers/projectionWorker");
 
 function computeStateFingerprint(shipmentId, status, location, version) {
   const payload = `${shipmentId}|${status}|${location}|${version}`;
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
+
+/**
+ * GET /shipments/live-stream
+ * Server-Sent Events (SSE) stream pushing materialized updates to the frontend
+ */
+router.get("/shipments/live-stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  if (typeof res.flushHeaders === "function") {
+    res.flushHeaders();
+  }
+
+  res.write(
+    `data: ${JSON.stringify({
+      status: "CONNECTED",
+      activeClients: sseService.activeClientCount() + 1,
+    })}\n\n`
+  );
+
+  sseService.addClient(res);
+});
 
 /**
  * GET /projection/lag
