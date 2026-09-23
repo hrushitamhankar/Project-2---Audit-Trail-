@@ -6,11 +6,11 @@ const router = express.Router();
 // Create a new audit event
 router.post("/events", async (req, res) => {
   try {
-    const { aggregateId, eventType, payload } = req.body;
+    const { aggregateId, eventType, payload, version } = req.body;
 
-    if (!aggregateId || !eventType || !payload) {
+    if (!aggregateId || !eventType || !payload || version === undefined) {
       return res.status(400).json({
-        message: "aggregateId, eventType and payload are required",
+        message: "aggregateId, eventType, payload and version are required",
       });
     }
 
@@ -18,6 +18,7 @@ router.post("/events", async (req, res) => {
       aggregateId,
       eventType,
       payload,
+      version,
     });
 
     return res.status(201).json(event);
