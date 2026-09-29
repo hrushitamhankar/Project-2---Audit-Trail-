@@ -7,11 +7,7 @@ function formatDateTime(date) {
 }
 
 function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false }) {
-  if (!shipmentEvents || shipmentEvents.length === 0) {
-    return null;
-  }
-
-  const timestamps = shipmentEvents.map((e) => new Date(e.timestamp).getTime());
+  const timestamps = shipmentEvents?.map((e) => new Date(e.timestamp).getTime()) || [];
   const minTime = Math.min(...timestamps);
   const maxTime = Math.max(...timestamps);
 
@@ -25,6 +21,10 @@ function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false })
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
   }, []);
+
+  if (!shipmentEvents || shipmentEvents.length === 0) {
+    return null;
+  }
 
   const handleSliderChange = (e) => {
     const newTime = parseInt(e.target.value, 10);
@@ -86,7 +86,7 @@ function StateScrubber({ shipmentEvents, onTimestampChange, isLoading = false })
           }}
           disabled={isLoading}
         >
-          ← Return to Live
+          Jump to live state
         </button>
       )}
     </div>

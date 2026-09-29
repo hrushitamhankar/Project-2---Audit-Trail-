@@ -6,9 +6,9 @@ import apiClient from './apiClient';
  * Flip individual endpoints to true as P1/P3 ship them.
  */
 const USE_REAL_API = {
-  getShipmentById: true,
-  getShipmentEvents: true,
-  getShipmentStateAt: true,
+  getShipmentById: false,
+  getShipmentEvents: false,
+  getShipmentStateAt: false,
 };
 
 const MOCK_SHIPMENTS = {

@@ -78,7 +78,13 @@ function DashboardPage() {
 
   return (
     <div className="dashboard-page">
-      <h2>Shipment Dashboard</h2>
+      <div className="page-toolbar">
+        <div>
+          <div className="page-eyebrow"><span className="eyebrow-line"></span> Shipment intelligence</div>
+          <h1>Shipment dashboard</h1>
+        </div>
+        <div className="toolbar-meta"><span className="connection-dot"></span> Data synced just now</div>
+      </div>
 
       {loading && <LoadingSpinner label={`Fetching shipment ${shipmentId}...`} />}
 
@@ -93,23 +99,19 @@ function DashboardPage() {
       {!loading && !error && shipment && (
         <>
           <ShipmentCard shipment={shipment} />
-          <h3 className="section-heading">Event Timeline</h3>
-          <Timeline events={events} isLoading={loading} />
-
-          <h3 className="section-heading">Time Travel</h3>
-          <StateScrubber
-            shipmentEvents={events}
-            onTimestampChange={handleScrubberChange}
-            isLoading={scrubberLoading}
-          />
-
-          {isViewingHistorical && (
-            <HistoricalStateCard
-              state={historicalState}
-              isLoading={scrubberLoading}
-              error={scrubberError}
-            />
-          )}
+          <div className="dashboard-grid">
+            <section className="content-panel timeline-panel">
+              <div className="panel-heading"><div><span className="panel-kicker">Activity log</span><h2>Event timeline</h2></div><span className="panel-count">{events.length} events</span></div>
+              <Timeline events={events} isLoading={loading} />
+            </section>
+            <aside className="dashboard-side">
+              <section className="content-panel time-panel">
+                <div className="panel-heading"><div><span className="panel-kicker">Replay history</span><h2>Time travel</h2></div></div>
+                <StateScrubber shipmentEvents={events} onTimestampChange={handleScrubberChange} isLoading={scrubberLoading} />
+              </section>
+              {isViewingHistorical && <HistoricalStateCard state={historicalState} isLoading={scrubberLoading} error={scrubberError} />}
+            </aside>
+          </div>
         </>
       )}
     </div>
