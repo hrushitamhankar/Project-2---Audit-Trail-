@@ -1,6 +1,6 @@
 // src/pages/DashboardPage.jsx
 import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { getShipmentById, getShipmentEvents, getShipmentStateAt } from '../services/shipmentService';
 import ShipmentCard from '../components/ShipmentCard';
 import Timeline from '../components/Timeline';
@@ -8,6 +8,20 @@ import StateScrubber from '../components/StateScrubber';
 import HistoricalStateCard from '../components/HistoricalStateCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+
+const TemperatureChart = lazy(() => import('../components/TemperatureChart'));
+
+function getShipmentErrorMessage(error, shipmentId) {
+  if (error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED') {
+    return 'Unable to reach the shipment service. Start the backend and check its MongoDB connection.';
+  }
+
+  if (error.response?.status === 404) {
+    return error.response.data?.message || `Shipment "${shipmentId}" was not found.`;
+  }
+
+  return error.response?.data?.message || `Could not load shipment "${shipmentId}": ${error.message}`;
+}
 
 function DashboardPage() {
   const { shipmentId } = useParams();
@@ -24,12 +38,6 @@ function DashboardPage() {
 
   useEffect(() => {
     let isMounted = true;
-    setLoading(true);
-    setError(null);
-    setShipment(null);
-    setEvents([]);
-    setHistoricalState(null);
-    setIsViewingHistorical(false);
 
     Promise.all([getShipmentById(shipmentId), getShipmentEvents(shipmentId)])
       .then(([shipmentData, eventsData]) => {
@@ -39,7 +47,7 @@ function DashboardPage() {
         }
       })
       .catch((err) => {
-        if (isMounted) setError(err.message);
+        if (isMounted) setError(getShipmentErrorMessage(err, shipmentId));
       })
       .finally(() => {
         if (isMounted) setLoading(false);
@@ -90,7 +98,7 @@ function DashboardPage() {
 
       {!loading && error && (
         <EmptyState
-          message={`Couldn't find shipment "${shipmentId}". Check the ID and try again.`}
+          message={error}
           actionLabel="Back to Search"
           onAction={() => navigate('/')}
         />
@@ -105,6 +113,21 @@ function DashboardPage() {
               <Timeline events={events} isLoading={loading} />
             </section>
             <aside className="dashboard-side">
+              <Suspense
+                fallback={(
+                  <section className="content-panel temperature-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="panel-kicker">Cold-chain monitoring</span>
+                        <h2>Temperature history</h2>
+                      </div>
+                    </div>
+                    <p className="temperature-empty" role="status">Loading temperature history...</p>
+                  </section>
+                )}
+              >
+                <TemperatureChart events={events} />
+              </Suspense>
               <section className="content-panel time-panel">
                 <div className="panel-heading"><div><span className="panel-kicker">Replay history</span><h2>Time travel</h2></div></div>
                 <StateScrubber shipmentEvents={events} onTimestampChange={handleScrubberChange} isLoading={scrubberLoading} />

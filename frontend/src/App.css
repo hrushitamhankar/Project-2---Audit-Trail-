@@ -136,6 +136,9 @@ button { cursor: pointer; }
 .swatch-created { background: var(--blue); color: var(--blue); }.swatch-transit { background: var(--green); color: var(--green); }.swatch-alert { background: var(--red); color: var(--red); }.swatch-arrived { background: var(--accent); color: var(--accent); }.swatch-default { background: var(--text-muted); color: var(--text-muted); }
 
 .dashboard-side { display: grid; gap: 22px; }
+.temperature-panel { min-width: 0; }
+.temperature-chart { height: 220px; padding: 12px 12px 18px; }
+.temperature-empty { margin: 0; padding: 24px; color: var(--text-muted); font-size: 12px; }
 .time-panel { padding-bottom: 22px; }
 .time-panel .state-scrubber { border: 0; padding: 22px 24px 0; background: transparent; }
 .scrubber-title-row { display: none; }

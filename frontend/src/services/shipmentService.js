@@ -2,13 +2,12 @@
 import apiClient from './apiClient';
 
 /**
- * Toggle this to switch between mock data and real backend calls.
- * Flip individual endpoints to true as P1/P3 ship them.
+ * Set an endpoint to false to use mock data instead of the backend.
  */
 const USE_REAL_API = {
-  getShipmentById: false,
-  getShipmentEvents: false,
-  getShipmentStateAt: false,
+  getShipmentById: true,
+  getShipmentEvents: true,
+  getShipmentStateAt: true,
 };
 
 const MOCK_SHIPMENTS = {
@@ -48,7 +47,12 @@ function simulateDelay(ms = 500) {
 export async function getShipmentById(id) {
   if (USE_REAL_API.getShipmentById) {
     const res = await apiClient.get(`/shipment/${id}`);
-    return res.data.data ?? res.data;
+    const shipment = res.data.data ?? res.data;
+    return {
+      ...shipment,
+      aggregateId: shipment.aggregateId ?? shipment.shipmentId,
+      status: shipment.status ?? shipment.currentStatus,
+    };
   }
   await simulateDelay();
   const shipment = MOCK_SHIPMENTS[id];
@@ -70,7 +74,16 @@ export async function getShipmentEvents(id) {
 export async function getShipmentStateAt(id, timestamp) {
   if (USE_REAL_API.getShipmentStateAt) {
     const res = await apiClient.get(`/shipment/${id}/state`, { params: { at: timestamp } });
-    return res.data.data ?? res.data;
+    const data = res.data.data ?? res.data;
+    const state = data.state ?? {};
+    return {
+      aggregateId: id,
+      asOf: data.requestedAt ?? timestamp,
+      eventsApplied: data.eventsApplied ?? 0,
+      lastEvent: state.lastEvent ?? null,
+      source: data.source,
+      rawState: state,
+    };
   }
   await simulateDelay();
   const events = MOCK_EVENTS[id];
